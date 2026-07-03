@@ -266,7 +266,7 @@ void gradingScreen(App& app)
             headers.push_back(p.questions[static_cast<size_t>(j)].title + " /" +
                               fmtNum(p.questions[static_cast<size_t>(j)].maxPoints));
         for (int j = 0; j < M; ++j)
-            ImGui::TableSetupColumn(headers[static_cast<size_t>(j)].c_str(), ImGuiTableColumnFlags_WidthFixed, 144.0f);
+            ImGui::TableSetupColumn(headers[static_cast<size_t>(j)].c_str(), ImGuiTableColumnFlags_WidthFixed, 190.0f);
         ImGui::TableSetupColumn("Total", ImGuiTableColumnFlags_WidthFixed, 92.0f);
 
         // Custom header row. Mirrors ImGui::TableHeadersRow() (PushID per column +
