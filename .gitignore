@@ -1,0 +1,19 @@
+# Build output
+/build/
+*.o
+*.exe
+
+# ImGui runtime layout file (disabled in code, but just in case)
+imgui.ini
+
+# Project autosaves
+*.autosave
+
+# Editor / OS
+.vs/
+.vscode/
+*.user
+Thumbs.db
+
+# Local Claude Code config (machine-specific)
+.claude/settings.local.json

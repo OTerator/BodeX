@@ -1,0 +1,10 @@
+-std=c++20
+-xc++
+-Ithird_party/imgui
+-Ithird_party/imgui/backends
+-Ithird_party/imgui/misc/cpp
+-Ithird_party/json
+-Isrc
+-DUNICODE
+-D_UNICODE
+-Wall

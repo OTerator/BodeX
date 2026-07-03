@@ -1,0 +1,5 @@
+/* Embed the application manifest (RT_MANIFEST = 24, id 1 = the process manifest). */
+1 24 "app.manifest"
+
+/* Application icon. Explorer shows the lowest-id group icon; code loads id 100. */
+100 ICON "BodeX.ico"

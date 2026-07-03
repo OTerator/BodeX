@@ -1,0 +1,71 @@
+# BodeX — MinGW g++ build (no CMake needed).
+# Uses MSYS2's sh for recipes so mkdir -p / rm -rf work regardless of the
+# shell that launches make. MSYS2 is required (ships the g++ toolchain anyway).
+
+SHELL       := C:/msys64/usr/bin/sh.exe
+.SHELLFLAGS := -c
+
+CXX      := g++
+CXXSTD   := -std=c++20
+OPT      := -O2
+WARN     := -Wall -Wno-unknown-pragmas
+INCLUDES := -Ithird_party/imgui -Ithird_party/imgui/backends -Ithird_party/imgui/misc/cpp -Ithird_party/json -Isrc
+DEFINES  := -DUNICODE -D_UNICODE
+CXXFLAGS := $(CXXSTD) $(OPT) $(WARN) $(INCLUDES) $(DEFINES)
+
+BUILD  := build
+OBJDIR := $(BUILD)/obj
+TARGET := $(BUILD)/BodeX.exe
+
+APP_SRCS := $(wildcard src/*.cpp) $(wildcard src/app/*.cpp) \
+            $(wildcard src/ui/*.cpp) $(wildcard src/model/*.cpp)
+
+IMGUI_SRCS := third_party/imgui/imgui.cpp \
+              third_party/imgui/imgui_draw.cpp \
+              third_party/imgui/imgui_tables.cpp \
+              third_party/imgui/imgui_widgets.cpp \
+              third_party/imgui/misc/cpp/imgui_stdlib.cpp \
+              third_party/imgui/backends/imgui_impl_win32.cpp \
+              third_party/imgui/backends/imgui_impl_dx11.cpp
+
+SRCS := $(APP_SRCS) $(IMGUI_SRCS)
+OBJS := $(patsubst %.cpp,$(OBJDIR)/%.o,$(SRCS))
+
+# Compiled Win32 resource (app manifest -> DPI awareness).
+RES := $(OBJDIR)/app_res.o
+
+# Static link so the .exe runs without the MinGW runtime DLLs. -mwindows hides
+# the console (GUI subsystem); with MinGW, plain int main() is still the entry.
+LDFLAGS := -mwindows -static -static-libgcc -static-libstdc++
+LDLIBS  := -ld3d11 -ld3dcompiler -ldxgi -ldwmapi -lgdi32 -lcomdlg32 -limm32 -lole32 -luuid -lshell32
+
+# Core-logic test: model only, no ImGui, console app.
+TEST_BIN  := $(BUILD)/test_core.exe
+TEST_SRCS := tests/test_core.cpp src/model/Scoring.cpp src/model/Serialization.cpp src/model/AppConfig.cpp
+
+.PHONY: all run test clean
+all: $(TARGET)
+
+$(TARGET): $(OBJS) $(RES)
+	@mkdir -p $(dir $@)
+	$(CXX) $(OBJS) $(RES) -o $@ $(LDFLAGS) $(LDLIBS)
+	@echo "Built $@"
+
+$(OBJDIR)/%.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(RES): resources/app.rc resources/app.manifest resources/BodeX.ico
+	@mkdir -p $(dir $@)
+	windres --include-dir resources resources/app.rc -O coff -o $@
+
+run: all
+	./$(TARGET)
+
+test:
+	@mkdir -p $(BUILD)
+	$(CXX) $(CXXSTD) $(WARN) -Ithird_party/json -Isrc $(TEST_SRCS) -o $(TEST_BIN) -lshell32
+	./$(TEST_BIN)
+
+clean:
+	rm -rf $(BUILD)
