@@ -29,6 +29,11 @@ toolchain and needs no external libraries installed.
   whole row automatically scores 0 and is greyed out.
 - **Live totals** — each student's `score / max` updates as you grade, plus a
   class summary (graded count, average, min, max) in the toolbar.
+- **Question images** — click a question's column header to attach screenshots:
+  the **question sheet** and **solution references** used to verify checks. Tag
+  each image with the sub-question(s) it covers, and preview it in a window you
+  can keep open beside the grid. Images are copied into an assets folder beside
+  the project so they travel with it.
 - **Saved as JSON** — one `.json` file per project; reopen it any time. Recent
   projects are remembered.
 
@@ -87,8 +92,13 @@ BODEX_DEMO=1 ./build/BodeX.exe
 4. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
    with unsaved changes prompts to Save / Discard / Cancel.
 
+Click a **question's column header** to open its image menu — add / preview /
+remove the question sheet and solution-reference screenshots, each tagged to the
+sub-questions it covers. Previews open in a separate, resizable window.
+
 Projects and the recent-projects list live under
-`%APPDATA%\BodeX\` by default (you can Save As / Open anywhere).
+`%APPDATA%\BodeX\` by default (you can Save As / Open anywhere). A question's
+images are copied next to its `.json` in a `<project>.assets/` folder.
 
 ## Project file format
 
@@ -125,3 +135,4 @@ with their source under `third_party/`):
 
 - [Dear ImGui](https://github.com/ocornut/imgui) © Omar Cornut — immediate-mode GUI
 - [nlohmann/json](https://github.com/nlohmann/json) © Niels Lohmann — JSON for Modern C++
+- [stb_image](https://github.com/nothings/stb) by Sean Barrett — public-domain image loader (`third_party/stb/`)

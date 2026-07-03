@@ -72,6 +72,9 @@ mingw32-make clean    # remove build/
 - `BODEX_DEMO=3` → jump to the New Project screen.
 Handled in `App::App()` (`src/app/App.cpp`, `buildDemoProject()`).
 
+`BODEX_OPEN=<path>` opens a specific project on launch (used for "open with" and
+for GUI testing without clicking through the launcher).
+
 **Desktop shortcut:** `tools/create_shortcut.ps1` creates/refreshes
 `Desktop\BodeX.lnk` (icon from `resources/BodeX.ico`, target `build/BodeX.exe`,
 triggers a shell icon-cache refresh).
@@ -104,16 +107,20 @@ src/
   ui/CellEditor.*        Cell editor popup + student (no-submission) menu popup.
   ui/widgets.*           fmtNum(), greenTickCheckbox(), bigTitle().
   ui/platform_dialogs.*  Native Win32 open/save file dialogs (commdlg).
+  ui/QuestionImages.*    Column-header image menu (add/preview/remove) + preview window.
+  ui/ImageStore.*        Loads images -> D3D11 textures for ImGui::Image (uses stb_image).
   model/Project.h        Data model (header-only) + builders/normalizers.
   model/Scoring.{h,cpp}  Score computation + class stats. GUI-free.
   model/Serialization.*  Project <-> JSON (nlohmann) + UTF-8 file I/O. GUI-free.
   model/AppConfig.*      %APPDATA%\BodeX paths, recent-projects config, nowIso().
+  model/Assets.{h,cpp}   Question-image asset dirs + copy/migrate. GUI-free (Win32 file ops).
   util/utf.h             UTF-8 <-> UTF-16 helpers (header-only, inline).
 tests/test_core.cpp      Non-GUI tests: scoring, JSON/file round-trip, recent alias.
 third_party/
   imgui/                 Dear ImGui 1.92.9 (master) core + win32/dx11 backends +
                          misc/cpp/imgui_stdlib (std::string InputText). MIT.
   json/json.hpp          nlohmann/json single header (v3.11.3). MIT.
+  stb/stb_image.h        image decoder for ImageStore (public domain).
 ```
 
 Namespaces: model + UI live in `namespace gt` / `gt::ui`. `App` is a **global**
@@ -272,6 +279,27 @@ rows.
 
 ---
 
+## 9b. Question images (screenshots / solution references)
+
+Per-question attachments, column-level (shared across students). Model:
+`QuestionImage { file, role (Question|Solution), caption, subQuestions[] }` on
+`Question::images` (`model/Project.h`); `Project::id` names the pre-save staging
+dir. Accessed from the **column header** (click → `questionImagesPopup`), previewed
+in a **non-modal window** (`imagePreviewWindow`) that can stay open beside the grid.
+
+- **Storage (copy-beside-project):** files live in `<project>.assets/` next to the
+  `.json`; before first save they stage in `%APPDATA%\BodeX\staging\<id>\`.
+  `App::assetsDir` is the current live dir. `Assets.{h,cpp}` provides
+  `liveAssetsDir`, `projectAssetsDir`, `stagingAssetsDir`, `importImage` (copy in),
+  and `syncImages` (migrate on Save / Save As). `doSave()` migrates staged files
+  into `<project>.assets/`. `closeProject`/`applyLoadedProject` call
+  `imageStoreReleaseAll()`.
+- **Textures:** `ImageStore` (`ui/ImageStore.*`) decodes with stb_image
+  (`STBI_WINDOWS_UTF8` for Unicode paths) into a D3D11 texture + SRV, cached by
+  absolute path; `main.cpp` calls `imageStoreInit` after the DX11 backend and
+  `imageStoreReleaseAll` before device cleanup. Draw with
+  `ImGui::Image((ImTextureID)(intptr_t)srv, size)`.
+
 ## 10. ImGui 1.92 specifics & gotchas
 
 - Vendored ImGui is **1.92.9 (master)** with matching win32 + dx11 backends and
@@ -288,6 +316,16 @@ rows.
 - `io.IniFilename = nullptr` (no imgui.ini written; app stays self-contained).
 - Popups: only call `EndPopup`/`EndTable`/`EndChild` when the matching `Begin*`
   returned true where required; `Begin`/`End` (window) are always paired.
+- **Custom table header rows must mirror `ImGui::TableHeadersRow()`**: wrap each
+  `TableHeader()` in `PushID(column_n)`/`PopID()` and skip via the
+  `TableSetColumnIndex()` return. `GradingTable.cpp` does this to make headers
+  clickable (image menu). A version that omitted the per-column `PushID` corrupted
+  the table's heap state, stomping the project's vector buffers and surfacing as an
+  intermittent SIGSEGV in `classStats` (a hot function reading the corrupted data)
+  — the classic "crash far from the cause" of heap corruption. If you see an
+  intermittent crash that vanishes at `-O0`/under gdb, suspect heap corruption; a
+  quick way to a backtrace is `gdb -batch -ex run -ex bt` on the `-O2 -g` build
+  (`mingw32-make OPT='-O2 -g'`).
 - `main()` + `-mwindows`: MinGW keeps `int main()` as the entry under the GUI
   subsystem, so no `WinMain` is needed and no console appears.
 
@@ -311,6 +349,11 @@ rows.
   unsaved work, route through `guard(Pending::…)`.
 - Breaking model change → bump `Project::schemaVersion` and handle old files in
   `projectFromJsonString`.
+- **Question images:** metadata in `model/Project.h` (`QuestionImage`) +
+  `Serialization.cpp`; file storage in `model/Assets.*`; GPU textures in
+  `ui/ImageStore.*`; UI in `ui/QuestionImages.*` and the `GradingTable` header.
+  Keep `App::assetsDir` and the `doSave()` asset-migration in sync if you change
+  where files live.
 - New third-party include dir → add to both `Makefile` `INCLUDES` and
   `compile_flags.txt` (keep them in sync for clangd).
 

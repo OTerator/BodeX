@@ -14,6 +14,30 @@ namespace {
 const char* splitToStr(SplitMode m) { return m == SplitMode::Custom ? "custom" : "equal"; }
 SplitMode   splitFromStr(const std::string& s) { return s == "custom" ? SplitMode::Custom : SplitMode::Equal; }
 
+const char* roleToStr(ImageRole r) { return r == ImageRole::Solution ? "solution" : "question"; }
+ImageRole   roleFromStr(const std::string& s) { return s == "solution" ? ImageRole::Solution : ImageRole::Question; }
+
+json imageToJson(const QuestionImage& im)
+{
+    return json{
+        {"file", im.file},
+        {"role", roleToStr(im.role)},
+        {"caption", im.caption},
+        {"subQuestions", im.subQuestions},
+    };
+}
+
+QuestionImage imageFromJson(const json& j)
+{
+    QuestionImage im;
+    im.file    = j.value("file", std::string());
+    im.role    = roleFromStr(j.value("role", std::string("question")));
+    im.caption = j.value("caption", std::string());
+    if (j.contains("subQuestions") && j.at("subQuestions").is_array())
+        im.subQuestions = j.at("subQuestions").get<std::vector<int>>();
+    return im;
+}
+
 json cellToJson(const Cell& c)
 {
     return json{
@@ -40,12 +64,16 @@ Cell cellFromJson(const json& j)
 
 json questionToJson(const Question& q)
 {
+    json images = json::array();
+    for (const auto& im : q.images)
+        images.push_back(imageToJson(im));
     return json{
         {"title", q.title},
         {"maxPoints", q.maxPoints},
         {"subCount", q.subCount},
         {"split", splitToStr(q.split)},
         {"subPoints", q.subPoints},
+        {"images", std::move(images)},
     };
 }
 
@@ -58,6 +86,9 @@ Question questionFromJson(const json& j)
     q.split     = splitFromStr(j.value("split", std::string("equal")));
     if (j.contains("subPoints") && j.at("subPoints").is_array())
         q.subPoints = j.at("subPoints").get<std::vector<double>>();
+    if (j.contains("images") && j.at("images").is_array())
+        for (const auto& ji : j.at("images"))
+            q.images.push_back(imageFromJson(ji));
     return q;
 }
 
@@ -125,6 +156,7 @@ std::string toJsonString(const Project& p, int indent)
 
     json root{
         {"schemaVersion", p.schemaVersion},
+        {"id", p.id},
         {"name", p.name},
         {"createdIso", p.createdIso},
         {"questions", std::move(questions)},
@@ -145,6 +177,7 @@ bool projectFromJsonString(const std::string& text, Project& out, std::string* e
 
     Project p;
     p.schemaVersion = root.value("schemaVersion", 1);
+    p.id            = root.value("id", std::string());
     p.name          = root.value("name", std::string());
     p.createdIso    = root.value("createdIso", std::string());
 

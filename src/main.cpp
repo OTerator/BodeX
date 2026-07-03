@@ -12,6 +12,7 @@
 #include <tchar.h>
 
 #include "app/App.h"
+#include "ui/ImageStore.h"
 
 // ---- D3D11 globals --------------------------------------------------------
 static ID3D11Device*           g_pd3dDevice = nullptr;
@@ -74,6 +75,7 @@ int main(int, char**)
 
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
+    gt::ui::imageStoreInit(g_pd3dDevice, g_pd3dDeviceContext); // for question images
 
     // Scale the whole UI (sizes + fonts) to the monitor DPI so it renders crisp
     // and correctly sized on high-DPI displays (process is DPI-aware via manifest).
@@ -145,6 +147,7 @@ int main(int, char**)
             done = true;
     }
 
+    gt::ui::imageStoreReleaseAll(); // free image textures while the device is alive
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();

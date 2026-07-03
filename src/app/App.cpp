@@ -8,6 +8,8 @@
 #include "model/Scoring.h"
 #include "model/Serialization.h"
 #include "model/AppConfig.h"
+#include "model/Assets.h"
+#include "ui/ImageStore.h"
 
 #include "imgui.h"
 
@@ -77,6 +79,12 @@ App::App()
     config = gt::loadConfig();
     draft.reset();
 
+    // Open a project passed via env (used for "open with" / testing).
+    if (const char* op = std::getenv("BODEX_OPEN"); op && *op) {
+        openProjectPath(op);
+        return;
+    }
+
     if (const char* d = std::getenv("BODEX_DEMO"); d && *d && *d != '0') {
         if (*d == '3') {                // BODEX_DEMO=3 jumps to the New Project screen
             newProjectStart();
@@ -85,6 +93,7 @@ App::App()
             hasProject = true;
             dirty = true;
             screen = Screen::Grading;
+            assetsDir = gt::liveAssetsDir(project, projectPath);
             if (*d == '2') {            // BODEX_DEMO=2 also opens the cell editor
                 editorStudent = 0;
                 editorQuestion = 0;
@@ -224,6 +233,7 @@ void App::createProjectFromDraft()
     projectPath.clear();
     dirty = true;                 // new, unsaved
     screen = Screen::Grading;
+    assetsDir = gt::liveAssetsDir(project, projectPath); // staging until first save
     statusMsg = "New project created - use Save to write it to disk.";
 }
 
@@ -248,11 +258,13 @@ bool App::openProjectPath(const std::string& path)
 
 void App::applyLoadedProject(gt::Project&& p, const std::string& path)
 {
+    gt::ui::imageStoreReleaseAll(); // drop any previous project's textures
     project = std::move(p);
     hasProject = true;
     projectPath = path;
     dirty = false;
     screen = Screen::Grading;
+    assetsDir = gt::liveAssetsDir(project, path);
     gt::addRecentProject(config, path);
     gt::saveConfig(config);
     statusMsg = "Opened " + path;
@@ -270,6 +282,21 @@ bool App::doSave()
         statusMsg = "Save failed: " + err;
         return false;
     }
+
+    // Migrate image files into the project's .assets folder (from staging on the
+    // first save, or from the old location on Save As). No-op on a plain re-save.
+    const std::string newDir = gt::projectAssetsDir(projectPath);
+    if (!newDir.empty() && newDir != assetsDir) {
+        std::vector<std::string> files;
+        for (const auto& q : project.questions)
+            for (const auto& im : q.images)
+                if (!im.file.empty())
+                    files.push_back(im.file);
+        gt::syncImages(assetsDir, newDir, files);
+        gt::ui::imageStoreReleaseAll(); // paths changed; reload from the new dir
+        assetsDir = newDir;
+    }
+
     dirty = false;
     gt::addRecentProject(config, projectPath);
     gt::saveConfig(config);
@@ -291,11 +318,16 @@ bool App::doSaveAs()
 
 void App::closeProject()
 {
+    gt::ui::imageStoreReleaseAll();
     hasProject = false;
     project = gt::Project{};
     projectPath.clear();
+    assetsDir.clear();
     dirty = false;
     editorStudent = editorQuestion = menuStudent = -1;
+    imageMenuQuestion = previewQuestion = previewImage = -1;
+    previewOpen = false;
+    addImagePendingFile.clear();
     screen = Screen::Home;
     statusMsg = "Project closed.";
 }

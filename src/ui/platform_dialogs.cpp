@@ -8,11 +8,13 @@ namespace gt::ui {
 
 namespace {
 
-// The filter is a double-NUL-terminated list of NUL-separated pairs.
-const wchar_t* kFilter = L"BodeX Project (*.json)\0*.json\0All Files (*.*)\0*.*\0";
+// Filters are double-NUL-terminated lists of NUL-separated pairs.
+const wchar_t* kProjectFilter = L"BodeX Project (*.json)\0*.json\0All Files (*.*)\0*.*\0";
+const wchar_t* kImageFilter   = L"Images (*.png;*.jpg;*.jpeg;*.bmp;*.gif)\0*.png;*.jpg;*.jpeg;*.bmp;*.gif\0All Files (*.*)\0*.*\0";
 
 bool runDialog(std::string& outPath, const std::string& initialDir,
-               const std::string& suggestedName, bool save)
+               const std::string& suggestedName, bool save,
+               const wchar_t* filter, const wchar_t* defExt)
 {
     wchar_t fileBuf[1024];
     fileBuf[0] = L'\0';
@@ -28,12 +30,12 @@ bool runDialog(std::string& outPath, const std::string& initialDir,
     ZeroMemory(&ofn, sizeof(ofn));
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = ::GetActiveWindow();
-    ofn.lpstrFilter = kFilter;
+    ofn.lpstrFilter = filter;
     ofn.nFilterIndex = 1;
     ofn.lpstrFile = fileBuf;
     ofn.nMaxFile = 1024;
     ofn.lpstrInitialDir = wInitDir.empty() ? nullptr : wInitDir.c_str();
-    ofn.lpstrDefExt = L"json";
+    ofn.lpstrDefExt = defExt;
 
     BOOL ok;
     if (save) {
@@ -54,13 +56,18 @@ bool runDialog(std::string& outPath, const std::string& initialDir,
 
 bool openProjectDialog(std::string& outPath, const std::string& initialDir)
 {
-    return runDialog(outPath, initialDir, "", /*save=*/false);
+    return runDialog(outPath, initialDir, "", /*save=*/false, kProjectFilter, L"json");
 }
 
 bool saveProjectDialog(std::string& outPath, const std::string& initialDir,
                        const std::string& suggestedName)
 {
-    return runDialog(outPath, initialDir, suggestedName, /*save=*/true);
+    return runDialog(outPath, initialDir, suggestedName, /*save=*/true, kProjectFilter, L"json");
+}
+
+bool openImageDialog(std::string& outPath, const std::string& initialDir)
+{
+    return runDialog(outPath, initialDir, "", /*save=*/false, kImageFilter, nullptr);
 }
 
 } // namespace gt::ui

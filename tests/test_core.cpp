@@ -40,6 +40,13 @@ static Project buildSample()
     Project p = makeProject("Sample Exercise", 3, {q1, q2});
     p.createdIso = "2026-07-03 12:00";
 
+    // Attach images to Q2 (subCount 2). The 9 is an out-of-range sub-question tag
+    // that ensureShape() must drop on load.
+    QuestionImage imgQ; imgQ.file = "q2-question.png"; imgQ.role = ImageRole::Question; imgQ.caption = "stem";
+    QuestionImage imgS; imgS.file = "q2-sol.png"; imgS.role = ImageRole::Solution; imgS.caption = "answer key";
+    imgS.subQuestions = {0, 1, 9};
+    p.questions[1].images = {imgQ, imgS};
+
     // Student 1: manual 12/20 on Q1 (3/5 answered), green tick on Q2 -> 22.
     p.students[0].cells[0].awarded = 12.0;
     p.students[0].cells[0].subAnswered = 3;
@@ -158,6 +165,33 @@ static void testFileRoundTrip()
     CHECK(!loadProject("build/_does_not_exist_zzz.json", p3, &err2));
 }
 
+static void testImagesRoundTrip()
+{
+    Project p = buildSample();
+    CHECK(!p.id.empty());               // makeProject assigns a project id
+
+    std::string text = toJsonString(p);
+    Project p2;
+    std::string err;
+    CHECK(projectFromJsonString(text, p2, &err));
+
+    CHECK(p2.id == p.id);
+    CHECK(p2.questions[1].images.size() == 2);
+
+    const QuestionImage& a = p2.questions[1].images[0];
+    CHECK(a.role == ImageRole::Question);
+    CHECK(a.file == "q2-question.png");
+    CHECK(a.caption == "stem");
+    CHECK(a.subQuestions.empty());      // whole question
+
+    const QuestionImage& b = p2.questions[1].images[1];
+    CHECK(b.role == ImageRole::Solution);
+    CHECK(b.caption == "answer key");
+    CHECK(b.subQuestions.size() == 2);  // the out-of-range 9 was dropped
+    CHECK(b.subQuestions[0] == 0);
+    CHECK(b.subQuestions[1] == 1);
+}
+
 static void testMalformedJson()
 {
     Project p;
@@ -196,6 +230,7 @@ int main()
     testScoring();
     testRoundTrip();
     testFileRoundTrip();
+    testImagesRoundTrip();
     testMalformedJson();
     testRecentAliasSafe();
 

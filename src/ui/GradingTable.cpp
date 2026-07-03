@@ -3,6 +3,7 @@
 #include "app/App.h"
 #include "ui/widgets.h"
 #include "ui/CellEditor.h"
+#include "ui/QuestionImages.h"
 #include "model/Scoring.h"
 #include "imgui.h"
 
@@ -267,7 +268,33 @@ void gradingScreen(App& app)
         for (int j = 0; j < M; ++j)
             ImGui::TableSetupColumn(headers[static_cast<size_t>(j)].c_str(), ImGuiTableColumnFlags_WidthFixed, 144.0f);
         ImGui::TableSetupColumn("Total", ImGuiTableColumnFlags_WidthFixed, 92.0f);
-        ImGui::TableHeadersRow();
+
+        // Custom header row. Mirrors ImGui::TableHeadersRow() (PushID per column +
+        // proper header row height + the TableSetColumnIndex skip) so we don't
+        // corrupt table state, while making question headers clickable to open
+        // their image menu and showing a badge for attached images.
+        const int headerCols = 1 + M + 1;
+        ImGui::TableNextRow(ImGuiTableRowFlags_Headers); // auto header row height
+        for (int c = 0; c < headerCols; ++c) {
+            if (!ImGui::TableSetColumnIndex(c))
+                continue;
+            ImGui::PushID(c);
+            if (c >= 1 && c <= M) {
+                const int j = c - 1;
+                std::string hlabel = headers[static_cast<size_t>(j)];
+                const size_t nImg = p.questions[static_cast<size_t>(j)].images.size();
+                if (nImg > 0)
+                    hlabel += "  [" + std::to_string(nImg) + " img]";
+                ImGui::TableHeader(hlabel.c_str());
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+                    app.imageMenuQuestion = j;
+                    app.requestOpenImageMenu = true;
+                }
+            } else {
+                ImGui::TableHeader(ImGui::TableGetColumnName(c)); // "ID" / "Total"
+            }
+            ImGui::PopID();
+        }
 
         ImGuiListClipper clipper;
         clipper.Begin(static_cast<int>(p.students.size()));
@@ -305,7 +332,7 @@ void gradingScreen(App& app)
 
     // ---- status bar ----
     ImGui::TextDisabled("%s", app.statusMsg.empty()
-        ? "Left-click = full marks; hold & drag to paint a row/column.  Right-click = edit.  Click an ID for no-submission.  Ctrl+S saves."
+        ? "Left-click = full marks; drag to paint a row/column.  Right-click = edit.  Click a column header for images.  Ctrl+S saves."
         : app.statusMsg.c_str());
 
     // ---- popups (opened here, after the table, using stored targets) ----
@@ -317,10 +344,18 @@ void gradingScreen(App& app)
         ImGui::OpenPopup("StudentMenu");
         app.requestOpenStudentMenu = false;
     }
+    if (app.requestOpenImageMenu) {
+        ImGui::OpenPopup("QuestionImages");
+        app.requestOpenImageMenu = false;
+    }
     cellEditorPopup(app);
     studentMenuPopup(app);
+    questionImagesPopup(app);
 
     ImGui::End();
+
+    // Image preview is a separate, non-modal window (can stay open while grading).
+    imagePreviewWindow(app);
 }
 
 } // namespace gt::ui

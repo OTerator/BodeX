@@ -4,6 +4,7 @@
 -Ithird_party/imgui/backends
 -Ithird_party/imgui/misc/cpp
 -Ithird_party/json
+-Ithird_party/stb
 -Isrc
 -DUNICODE
 -D_UNICODE

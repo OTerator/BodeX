@@ -9,7 +9,7 @@ CXX      := g++
 CXXSTD   := -std=c++20
 OPT      := -O2
 WARN     := -Wall -Wno-unknown-pragmas
-INCLUDES := -Ithird_party/imgui -Ithird_party/imgui/backends -Ithird_party/imgui/misc/cpp -Ithird_party/json -Isrc
+INCLUDES := -Ithird_party/imgui -Ithird_party/imgui/backends -Ithird_party/imgui/misc/cpp -Ithird_party/json -Ithird_party/stb -Isrc
 DEFINES  := -DUNICODE -D_UNICODE
 CXXFLAGS := $(CXXSTD) $(OPT) $(WARN) $(INCLUDES) $(DEFINES)
 

@@ -67,6 +67,24 @@ public:
     int  paintAnchorCol = -1;   // question index the gesture started on
     int  paintAxis = 0;         // 0 = undecided, 1 = row, 2 = column
 
+    // Question images: where this project's image files currently live.
+    std::string assetsDir;
+
+    // Column-header image menu target + preview window state.
+    int   imageMenuQuestion = -1;
+    bool  requestOpenImageMenu = false;
+    bool  previewOpen = false;
+    int   previewQuestion = -1;
+    int   previewImage = -1;
+    float previewZoom = 1.0f;
+    bool  previewFit = true;    // fit-to-window (recomputed each frame) vs manual zoom
+
+    // Transient "Add image" form (inside the image menu popup).
+    std::string       addImagePendingFile; // picked source path awaiting confirm
+    int               addImageRole = 0;     // 0 = Question, 1 = Solution
+    std::string       addImageCaption;
+    std::vector<char> addImageSubs;         // per sub-question checkbox state
+
     // ---- actions invoked by screens/menu ----
     void newProjectStart();                          // -> NewProject screen, fresh draft
     void createProjectFromDraft();                   // build project -> Grading screen
