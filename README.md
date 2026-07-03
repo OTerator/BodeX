@@ -1,6 +1,6 @@
 # BodeX
 
-A private, single-user Windows desktop app for tracking exam grading — a
+A private, single-user Windows desktop app for tracking exercise/exam grading — a
 students × questions grid modeled on the paper notebook a grader fills in by
 hand. Written in C++ with [Dear ImGui](https://github.com/ocornut/imgui)
 (Win32 + Direct3D 11), it builds to one self-contained `.exe` with the MinGW
