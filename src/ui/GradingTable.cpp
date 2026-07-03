@@ -93,16 +93,18 @@ void renderGradeCell(App& app, int i, int j)
 
     if (s.noSubmission) ImGui::BeginDisabled();
     ImGui::Button(label.c_str(), ImVec2(-FLT_MIN, cellH));
-    const bool rightClicked = ImGui::IsItemClicked(ImGuiMouseButton_Right);
-    const bool hovered      = ImGui::IsItemHovered();
+    const bool leftClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    const bool hovered     = ImGui::IsItemHovered();
     if (s.noSubmission) ImGui::EndDisabled();
 
-    // Left-click / drag "paint full marks" is resolved centrally after the table
-    // (handlePaintGesture) via the recorded rects below. Here: record this cell's
-    // rect and handle right-click-to-edit + the note tooltip.
+    // Interaction (swapped from the usual convention on purpose):
+    //   left-click  -> open the cell editor (occlusion-aware via IsItemClicked)
+    //   right-click / right-drag -> full marks (handlePaintGesture, after the table)
+    // The left-click editor uses IsItemClicked so it won't fire for cells hidden
+    // under the floating image-preview window. (See NOTES.md: preview click-through.)
     if (!s.noSubmission) {
         g_cellRects.push_back({ ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), i, j });
-        if (rightClicked) {
+        if (leftClicked) {
             app.editorStudent = i;
             app.editorQuestion = j;
             app.requestOpenCellEditor = true;
@@ -161,9 +163,10 @@ void applyFullRange(App& app, int anchorRow, int anchorCol, int hr, int hc, int 
     if (changed) app.markDirty();
 }
 
-// Resolve the left-click / drag-to-paint gesture using the cell rects recorded
-// this frame. A plain click toggles the cell's full marks; a drag paints full
-// marks along the row or column (axis picked from the initial drag direction).
+// Resolve the RIGHT-click / drag-to-paint full-marks gesture using the cell rects
+// recorded this frame. A plain right-click toggles the cell's full marks; a
+// right-drag paints full marks along the row or column (axis from the initial
+// drag direction). Left-click opens the editor (handled per-cell in renderGradeCell).
 void handlePaintGesture(App& app)
 {
     // Ignore while any popup (cell editor / student menu / save prompt) is open.
@@ -178,7 +181,7 @@ void handlePaintGesture(App& app)
     const int hr = over ? g_cellRects[static_cast<size_t>(idx)].row : -1;
     const int hc = over ? g_cellRects[static_cast<size_t>(idx)].col : -1;
 
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && over) {
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && over) {
         app.paintActive = true;
         app.paintIsDrag = false;
         app.paintAnchorRow = hr;
@@ -186,7 +189,7 @@ void handlePaintGesture(App& app)
         app.paintAxis = 0;
     }
 
-    if (app.paintActive && ImGui::IsMouseDown(ImGuiMouseButton_Left) && over) {
+    if (app.paintActive && ImGui::IsMouseDown(ImGuiMouseButton_Right) && over) {
         if (hr != app.paintAnchorRow || hc != app.paintAnchorCol) {
             app.paintIsDrag = true;
             if (app.paintAxis == 0) {           // lock the axis on first cell change
@@ -199,7 +202,7 @@ void handlePaintGesture(App& app)
             applyFullRange(app, app.paintAnchorRow, app.paintAnchorCol, hr, hc, app.paintAxis);
     }
 
-    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) && app.paintActive) {
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Right) && app.paintActive) {
         // A plain click (no drag, released over the same cell) toggles full marks.
         if (!app.paintIsDrag && over && hr == app.paintAnchorRow && hc == app.paintAnchorCol &&
             hr >= 0 && hr < static_cast<int>(p.students.size()) &&
@@ -286,6 +289,10 @@ void gradingScreen(App& app)
                 if (nImg > 0)
                     hlabel += "  [" + std::to_string(nImg) + " img]";
                 ImGui::TableHeader(hlabel.c_str());
+                // Header image menu opens on LEFT-click. (The left/right swap is
+                // for cells only; right-click on a header is ImGui's built-in
+                // "size column to fit" menu, so keeping this on left avoids a
+                // collision.)
                 if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
                     app.imageMenuQuestion = j;
                     app.requestOpenImageMenu = true;
@@ -332,7 +339,7 @@ void gradingScreen(App& app)
 
     // ---- status bar ----
     ImGui::TextDisabled("%s", app.statusMsg.empty()
-        ? "Left-click = full marks; drag to paint a row/column.  Right-click = edit.  Click a column header for images.  Ctrl+S saves."
+        ? "Right-click = full marks; right-drag to paint a row/column.  Left-click = edit.  Click a column header for images.  Ctrl+S saves."
         : app.statusMsg.c_str());
 
     // ---- popups (opened here, after the table, using stored targets) ----

@@ -83,11 +83,11 @@ BODEX_DEMO=1 ./build/BodeX.exe
 1. **New Project** → set students, questions, and each question's points /
    sub-questions / split. A live **Total exam points** counter updates as you
    type. → **Create Project**.
-2. **Left-click a cell** to toggle **full marks** (turns green); **hold and drag**
-   to paint full marks across a whole **row or column** (direction picked from
-   your drag). **Right-click a cell** to open its editor: awarded points,
-   sub-questions answered (X/Y), last page (a page number with `-`/`+` steppers),
-   and a note. The last page shows as `lp: N` on the cell's second line.
+2. **Right-click a cell** to toggle **full marks** (turns green); **hold and
+   right-drag** to paint full marks across a whole **row or column** (direction
+   picked from your drag). **Left-click a cell** to open its editor: awarded
+   points, sub-questions answered (X/Y), last page (a page number with `-`/`+`
+   steppers), and a note. The last page shows as `lp: N` on the cell's second line.
 3. Click a **student ID** to mark *No submission* (row scores 0).
 4. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
    with unsaved changes prompts to Save / Discard / Cancel.

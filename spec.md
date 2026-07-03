@@ -252,10 +252,15 @@ after their trigger.
 ## 9. Grading grid interactions (important detail)
 
 In `GradingTable.cpp`:
-- **Left-click a cell** = toggle full marks. **Left-click + drag** = "paint" full
+- **Right-click a cell** = toggle full marks. **Right-click + drag** = "paint" full
   marks across a **row or column** (axis locked from the initial drag direction).
-- **Right-click a cell** = open the detailed cell editor.
+- **Left-click a cell** = open the detailed cell editor.
 - **Click a student ID** = student menu (No submission toggle).
+
+  (L/R were swapped deliberately: the left-click editor uses `IsItemClicked`, which
+  is occlusion-aware, so it won't fire for cells hidden under the floating image
+  preview; the paint gesture below is raw-mouse + rect hit-test and is NOT
+  occlusion-aware — see NOTES.md "preview click-through" for the proper fix.)
 
 The paint gesture is resolved centrally in `handlePaintGesture(app)` **after** the
 table is drawn, using **recorded cell rectangles** (`g_cellRects`), NOT
