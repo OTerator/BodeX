@@ -212,6 +212,15 @@ Per-cell effective points, **highest precedence first**:
   max; locked points don't shrink it).
 - `cellOverMax(q, c)` = grader typed more than the **effectiveMax** (visual orange
   warning only; storage is never silently capped).
+- `isFullMarks(q, c)` = the cell **earns full marks** and should read green FULL:
+  an explicit `fullTick`, **or** `awarded == maxPoints` with no sub-question locked
+  (`effectiveMax == maxPoints`). Over-max (`awarded > maxPoints`) is *not* full — it
+  stays the orange warning. This is a **display/behavior** predicate only; `cellPoints`
+  already scores a typed full as full. It unifies the two looks a full cell used to
+  have (green `fullTick` vs a blue typed `20 4/4`). Drives the grid's green style and
+  `FULL` label (`renderGradeCell`/`cellSummary`). *Nuance:* once `awarded == maxPoints`
+  a cell reads green regardless of the `fullTick`, so `f` can't "un-full" a typed-full
+  cell — use `-`.
 - `setAnsweredCount` / `setSubAnswered` (Scoring.*) are the editor helpers that
   lock/unlock sub-questions. **First interaction** on a cell that is still blank
   (`!touched`) or a full tick: the ticked sub-questions are assumed correct, so
@@ -222,13 +231,15 @@ Per-cell effective points, **highest precedence first**:
   5.5/7.5 when one of four equal sub-qs is skipped), unlocking adds them back, then
   clamps `awarded` into `[0, effectiveMax]`. Either way `fullTick` clears once a
   sub-question is skipped and the cell is marked `touched`. GUI-free/tested.
-- `stepAwarded(q, c, delta)` (Scoring.*) steps `awarded` by `delta` (±1) with the
-  **same first-interaction sync**: on a blank (`!touched`) or full-tick cell a `-`
-  (or any step on a full cell) sets the baseline to `effectiveMax` *without*
-  deducting yet — so a second `-` takes the first point off (two `-` == −1 from
-  full) — while a `+` on a blank cell builds up from 0; afterwards `awarded += delta`
-  clamped to `[0, effectiveMax]`. Clears `fullTick`, marks `touched`. Used by the
-  cell editor's −/+ buttons and the grid's `+`/`-` keys (§9). GUI-free/tested.
+- `stepAwarded(q, c, delta)` (Scoring.*) steps `awarded` by `delta` (±1) in **one
+  press**. Baseline: a green/full cell (`fullTick`) → the full `maxPoints`; a blank
+  cell (`!touched`) → `effectiveMax` for `-` but `0` for `+` (so `-` docks from full,
+  `+` builds up from 0); a graded cell (incl. a typed full) → its current `awarded`.
+  Then `awarded = clamp(baseline + delta, 0, effectiveMax)`, `fullTick` cleared,
+  `touched` set. So green FULL `-` → `19` in one press, and `+` back to the max reads
+  green again via `isFullMarks` (not a re-set tick). Used by the cell editor's −/+
+  buttons and the grid's `+`/`-` keys (§9). GUI-free/tested. *(Distinct from the
+  sub-question helpers above, which keep the sync-then-deduct behavior.)*
 - `classStats(p)` = students / graded (no-submission or any touched-or-full cell) /
   average / min / max.
 
@@ -318,9 +329,11 @@ In `GradingTable.cpp`:
 - **Keyboard-first grading** (`handleGridKeyboard`): a selected "active" cell
   (`App::activeRow/activeCol`, blue outline) driven from the keyboard — **arrows**
   move it; **digits/`.`** begin an inline awarded-points edit; **`+`/`-`** step the
-  awarded points ±1 in place (first `-` on a blank/full cell assumes full marks —
-  `gt::stepAwarded`; `-` is therefore no longer an inline-edit seed char); **Space**
-  (mid-edit) steps into an inline **last-page** field; **Enter**/**Tab** commit and advance
+  awarded points ±1 in place in one press (`-` docks from full/current, `+` builds up
+  — `gt::stepAwarded`; `-` is no longer an inline-edit seed char); **Space** opens the
+  inline editor in *review* mode (nothing typed) — press it **again** to step into the
+  inline **last-page** field, so you can add a page to any cell (incl. a green FULL)
+  without disturbing its score; **Enter**/**Tab** commit and advance
   (down / right; Shift+Tab left); **Esc** cancels; **`f`**/**`n`** toggle full-marks /
   the row's no-submission; **Del**/**Backspace** clear the cell; **F2** opens the full
   editor. Mechanics detailed below.
@@ -374,19 +387,25 @@ near the top of `gradingScreen`, **before** `BeginTable`, so the selection / scr
   triggers `SetScrollHereY`/`SetScrollHereX(0.5)` on the active cell (vertical is
   reliable; horizontal is best-effort — a fully clipped column registers no item rect).
 - **Inline edit (`renderInlineEdit`)** replaces the active cell's button with a score
-  `InputText(CharsDecimal|EnterReturnsTrue|CallbackAlways)` (line 1) seeded with the
-  typed digit. Gotcha handled: `SetKeyboardFocusHere` **selects-all** the seed, so the
-  next keystroke would replace the first digit ("7.5" → ".5"). `inlineEditCallback`
-  collapses that initial selection **once** (guarded by `gridEditDeselect`, detected
-  via a live `SelectionStart != SelectionEnd`), so later digits append. **Space** steps
-  into a second `lp:` last-page `InputText` (line 2), tracked by `gridEditPageActive` /
-  `gridEditPageBuf` / `gridEditPageFocus` and seeded with the cell's current `lastPage`
-  (`CharsDecimal` keeps the space out of the score buffer, so it is a clean hotkey).
-  Commit (Enter → down, Tab → right, from either field) does `awarded = strtod(buf)`,
-  `fullTick = false`, `touched = true`, and — **only when the page field was stepped
-  into** — `lastPage = to_string(atoi(pageBuf))` (empty clears it; a score-only commit
-  leaves the existing page untouched). **Esc** discards. The inline-edit state is reset
-  in `applyLoadedProject`/`closeProject` alongside `gridEditing`.
+  `InputText(CharsDecimal|EnterReturnsTrue|CallbackAlways)` (line 1). **Two ways in:**
+  (a) typing a **digit/`.`** seeds the buffer with it and marks the score dirty
+  (`gridEditScoreDirty`), collapsing `SetKeyboardFocusHere`'s **select-all** once (via
+  `gridEditDeselect`/`inlineEditCallback`, detected by a live `SelectionStart !=
+  SelectionEnd`) so later digits append; (b) **Space** opens it in *review* mode —
+  seeded with the cell's current value (`fmtNum(maxPoints)` if `isFullMarks`, else
+  `awarded`, else empty), `gridEditScoreDirty=false`, select-all **kept** so a first
+  keystroke replaces the seed. `IsItemEdited()` flips `gridEditScoreDirty` on any real
+  score change. **Space (again)** steps into a second `lp:` last-page `InputText` (line
+  2) — `gridEditPageActive`/`gridEditPageBuf`/`gridEditPageFocus`, seeded with the
+  current `lastPage`; a one-frame `gridEditSuppressSpace` swallows the very Space that
+  *opened* the editor so it doesn't jump straight to the page. Commit (Enter → down,
+  Tab → right) writes **only edited fields**: the score (`awarded = clamp(strtod(buf))`,
+  `fullTick = false`, `touched = true`) **only if `gridEditScoreDirty`**, and the page
+  (`lastPage`, **no** `touched` — a resume marker isn't a grade) **only if stepped
+  into** and changed; `markDirty()` fires only if something changed. So Space→page→Enter
+  on a green FULL cell keeps it FULL and just adds the page, and Space→Esc (or a
+  no-edit commit) leaves the cell exactly as it was. State is reset in
+  `applyLoadedProject`/`closeProject` alongside `gridEditing`.
 - Toggling full marks via **`f`** leaves `touched` alone (the §6 invariant), same as
   the mouse paint. Active-cell state lives on `App` (`activeRow/Col`, `gridEditing`,
   `gridEditBuf`, `gridEditFocus`, `gridEditDeselect`, `gridScrollToActive`) and is
@@ -499,9 +518,9 @@ in **non-modal windows** (`imagePreviewWindows`) that stay open beside the grid.
 
 ## 12. Verifying changes (do this, don't just build)
 
-- **Core logic:** `mingw32-make test` (145 checks: scoring rules incl. sub-question
-  sync and `stepAwarded` steps, JSON string + on-disk round-trip, recent-alias
-  regression). Add cases when you touch model, scoring, or serialization.
+- **Core logic:** `mingw32-make test` (157 checks: scoring rules incl. sub-question
+  sync, one-press `stepAwarded`, and `isFullMarks`, JSON string + on-disk round-trip,
+  recent-alias regression). Add cases when you touch model, scoring, or serialization.
 - **It builds:** `mingw32-make` with no warnings.
 - **GUI, visually:** the app is a real Win32 window; verify by screenshot. Launch
   with a demo mode and capture with **PrintWindow** (not screen-copy — a background

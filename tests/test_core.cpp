@@ -359,24 +359,25 @@ static void testEditorFirstInteractionSync()
     CHECK_NEAR(effectiveMax(qc, cc), 1.0);
 }
 
-// stepAwarded: +/- steps awarded points, sharing the sub-question sync. First '-'
-// on a blank/full cell assumes full marks (baseline = effMax) without deducting yet,
-// so a second '-' takes the first point off; '+' on a blank cell builds up from 0.
+// stepAwarded: +/- steps awarded points in ONE press. '-' docks a point immediately
+// from the full baseline (green/blank cell) or the current value (graded); '+' on a
+// blank cell builds up from 0. fullTick is cleared; the green look comes from
+// isFullMarks (awarded == maxPoints), so '+' back to full reads green again.
 static void testStepAwarded()
 {
     Question qe; qe.title = "Qe"; qe.maxPoints = 20.0; qe.subCount = 4; qe.split = SplitMode::Equal;
     Project p = makeProject("Step", 1, {qe});
     const Question& q = p.questions[0];
 
-    // Fresh cell, '-': assume full (20), no deduction yet; a second '-' -> 19.
+    // Fresh cell, '-': assume full and dock one in a single press -> 19.
     Cell& a = p.students[0].cells[0] = blankCell(qe);
     CHECK(!a.touched);
     stepAwarded(q, a, -1.0);
-    CHECK_NEAR(a.awarded, 20.0);
+    CHECK_NEAR(a.awarded, 19.0);
     CHECK(a.touched);
     CHECK(!a.fullTick);
     stepAwarded(q, a, -1.0);
-    CHECK_NEAR(a.awarded, 19.0);          // two '-' clicks == subtract 1 from full
+    CHECK_NEAR(a.awarded, 18.0);
 
     // Fresh cell, '+': build up from an empty (0) baseline -> 1.
     Cell& b = p.students[0].cells[0] = blankCell(qe);
@@ -384,21 +385,30 @@ static void testStepAwarded()
     CHECK_NEAR(b.awarded, 1.0);
     CHECK(b.touched);
 
-    // Full-tick cell, '-': sync to numeric full (20) and clear the tick; then -> 19.
+    // Green full-tick cell, '-': dock one straight to 19 (clears the tick, no longer full).
     Cell& f = p.students[0].cells[0] = blankCell(qe);
     f.fullTick = true; f.touched = true;
     stepAwarded(q, f, -1.0);
-    CHECK_NEAR(f.awarded, 20.0);
-    CHECK(!f.fullTick);
-    stepAwarded(q, f, -1.0);
     CHECK_NEAR(f.awarded, 19.0);
+    CHECK(!f.fullTick);
+    CHECK(!isFullMarks(q, f));
+    // '+' back to the full mark reads full again (via isFullMarks, not the tick).
+    stepAwarded(q, f, 1.0);
+    CHECK_NEAR(f.awarded, 20.0);
+    CHECK(isFullMarks(q, f));
 
-    // Full-tick cell, '+': stays full (already at the ceiling), tick cleared.
+    // Full-tick cell, '+': stays full (already at the ceiling).
     Cell& g = p.students[0].cells[0] = blankCell(qe);
     g.fullTick = true;
     stepAwarded(q, g, 1.0);
     CHECK_NEAR(g.awarded, 20.0);
-    CHECK(!g.fullTick);
+    CHECK(isFullMarks(q, g));
+
+    // Graded cell: plain +/- around the current value.
+    Cell& d = p.students[0].cells[0] = blankCell(qe);
+    d.awarded = 12.0; d.touched = true;
+    stepAwarded(q, d, -1.0); CHECK_NEAR(d.awarded, 11.0);
+    stepAwarded(q, d, 1.0);  CHECK_NEAR(d.awarded, 12.0);
 
     // Clamps to [0, effMax].
     Cell& h = p.students[0].cells[0] = blankCell(qe);
@@ -409,13 +419,35 @@ static void testStepAwarded()
     stepAwarded(q, h, 1.0); CHECK_NEAR(h.awarded, 20.0);
     stepAwarded(q, h, 1.0); CHECK_NEAR(h.awarded, 20.0);   // caps at effMax
 
-    // First-interaction baseline respects locked sub-questions: skip 1 of 4 -> effMax
-    // 15, so '-' assumes 15 (not the full 20).
+    // Baseline respects locked sub-questions: skip 1 of 4 -> effMax 15, so a blank
+    // '-' docks to 14 and never reads full.
     Cell& k = p.students[0].cells[0] = blankCell(qe);
     k.subAnswered = 3;                    // one skipped -> lock 5 -> effMax 15
     CHECK_NEAR(effectiveMax(q, k), 15.0);
     stepAwarded(q, k, -1.0);
-    CHECK_NEAR(k.awarded, 15.0);
+    CHECK_NEAR(k.awarded, 14.0);
+    CHECK(!isFullMarks(q, k));
+}
+
+// isFullMarks: a cell reads green FULL when it earns the question's full marks by
+// any route (explicit tick, or awarded == maxPoints with all sub-questions answered).
+// Over-max stays an orange warning, and a sub-question-capped cell never reads full.
+static void testIsFullMarks()
+{
+    Question qe; qe.title = "Qe"; qe.maxPoints = 20.0; qe.subCount = 4; qe.split = SplitMode::Equal;
+    Project p = makeProject("Full", 1, {qe});
+    const Question& q = p.questions[0];
+    Cell& c = p.students[0].cells[0];
+
+    c = blankCell(qe);                 CHECK(!isFullMarks(q, c));  // blank
+    c.fullTick = true;                 CHECK(isFullMarks(q, c));   // explicit tick
+    c = blankCell(qe); c.awarded = 20.0; c.touched = true;
+                                       CHECK(isFullMarks(q, c));   // typed to full == green
+    c.awarded = 19.0;                  CHECK(!isFullMarks(q, c));  // below full
+    c.awarded = 25.0;                  CHECK(!isFullMarks(q, c));  // over max -> warning, not full
+    c = blankCell(qe); c.subAnswered = 3; c.awarded = 15.0; c.touched = true;
+    CHECK_NEAR(effectiveMax(q, c), 15.0);
+    CHECK(!isFullMarks(q, c));         // capped at 15 of 20 -> not full
 }
 
 // subChecks survive a round-trip; a pre-v2 file loads as all-answered so its old
@@ -465,6 +497,7 @@ int main()
     testEditorAdjust();
     testEditorFirstInteractionSync();
     testStepAwarded();
+    testIsFullMarks();
     testSubChecksAndMigration();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);

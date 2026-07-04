@@ -88,6 +88,8 @@ public:
     std::string gridEditBuf;                // inline edit text buffer (score)
     bool        gridEditFocus = false;      // SetKeyboardFocusHere on next draw
     bool        gridEditDeselect = false;   // collapse InputText's auto-select-all once focused
+    bool        gridEditScoreDirty = false; // the score field was actually edited (commit gate)
+    bool        gridEditSuppressSpace = false; // ignore Space for the frame a Space-open fired
     bool        gridEditPageActive = false; // stepped into the last-page field (via Space)
     std::string gridEditPageBuf;            // inline last-page text buffer
     bool        gridEditPageFocus = false;  // SetKeyboardFocusHere on the page field next draw

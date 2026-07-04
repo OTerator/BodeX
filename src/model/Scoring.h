@@ -35,6 +35,12 @@ double projectMaxTotal(const Project& p);
 // warning; storage is not silently capped).
 bool cellOverMax(const Question& q, const Cell& c);
 
+// True when the cell *earns the question's full marks* and should read green FULL:
+// an explicit `fullTick`, OR `awarded == maxPoints` with no sub-question locked.
+// Over-max (awarded > maxPoints) is NOT full — it stays an orange warning. This is
+// a display/behavior predicate; `cellPoints` already scores a typed full as full.
+bool isFullMarks(const Question& q, const Cell& c);
+
 // Editor helpers: change which sub-questions count as answered.
 //   * First interaction (cell still blank `!touched`, or a full tick): the ticked
 //     sub-questions are assumed correct, so `awarded` is *synced* to `effectiveMax`
@@ -47,15 +53,15 @@ bool cellOverMax(const Question& q, const Cell& c);
 void setAnsweredCount(const Question& q, Cell& c, int newAnswered);        // Equal split
 void setSubAnswered(const Question& q, Cell& c, int index, bool answered); // Custom split
 
-// Step a cell's awarded points by `delta` (typically +1 / -1), sharing the same
-// first-interaction sync as the sub-question helpers above:
-//   * First interaction (blank `!touched`, or a full tick): the ticked state is
-//     assumed correct, so the baseline is `effectiveMax`. A `-` (or any step on a
-//     full cell) syncs to that full baseline *without* deducting yet — so a second
-//     `-` is what takes the first point off. A `+` on a blank cell instead builds up
-//     from an empty (0) baseline.
-//   * Afterwards: `awarded += delta`, clamped into [0, effectiveMax].
-// Clears `fullTick` and marks the cell touched. GUI-free so it is unit-tested.
+// Step a cell's awarded points by `delta` (typically +1 / -1) in ONE press:
+//   * green/full cell (`fullTick`): baseline is the full `maxPoints`, so `-` docks
+//     a point immediately (FULL -> maxPoints-1) and `+` stays at full.
+//   * blank cell (`!touched`): `-` assumes full and docks one in the same press
+//     (-> effectiveMax-1); `+` instead builds up from an empty (0) baseline (-> 1).
+//   * graded cell (incl. a typed full): baseline is the current `awarded`.
+// Then `awarded` is clamped into [0, effectiveMax] and `touched` is set. `fullTick`
+// is cleared — the green FULL look now comes from `isFullMarks` (awarded==maxPoints),
+// so stepping `+` back up to the full mark reads green again. GUI-free/unit-tested.
 void stepAwarded(const Question& q, Cell& c, double delta);
 
 // Simple class-wide summary for the status bar.

@@ -59,6 +59,17 @@ bool cellOverMax(const Question& q, const Cell& c)
     return c.awarded > effectiveMax(q, c) + 1e-9;
 }
 
+bool isFullMarks(const Question& q, const Cell& c)
+{
+    if (c.fullTick)
+        return true;
+    // Earns full marks: no sub-question locked (so the ceiling is the full max) and
+    // awarded lands exactly on maxPoints. Over-max stays an orange warning, not full.
+    return effectiveMax(q, c) >= q.maxPoints - 1e-9
+        && c.awarded >= q.maxPoints - 1e-9
+        && c.awarded <= q.maxPoints + 1e-9;
+}
+
 static void clampAwardedToEffMax(const Question& q, Cell& c)
 {
     const double em = effectiveMax(q, c);
@@ -118,20 +129,16 @@ void setSubAnswered(const Question& q, Cell& c, int index, bool answered)
 void stepAwarded(const Question& q, Cell& c, double delta)
 {
     const double em = effectiveMax(q, c);
-    if (!c.touched || c.fullTick) {
-        // First interaction on a blank or full-tick cell (mirrors the sub-question
-        // sync): the cell's ticked state is assumed correct.
-        const bool wasFull = c.fullTick;          // a full tick counts as "already full"
-        c.fullTick = false;
-        if (delta < 0.0 || wasFull)
-            c.awarded = em;                       // baseline = full; this press only
-                                                  // establishes it (no numeric deduct yet)
-        else
-            c.awarded = clampCell(delta, em);     // '+' on a blank cell: build up from 0
-    } else {
-        c.awarded = clampCell(c.awarded + delta, em);
-    }
-    c.touched = true;
+    double base;
+    if (c.fullTick)
+        base = q.maxPoints;                       // green full: dock/keep from full
+    else if (!c.touched)
+        base = (delta > 0.0) ? 0.0 : em;          // blank: '+' builds from 0, '-' from full
+    else
+        base = c.awarded;                         // graded (incl. a typed full)
+    c.awarded  = clampCell(base + delta, em);
+    c.fullTick = false;                           // numeric now; green comes from isFullMarks
+    c.touched  = true;
 }
 
 ClassStats classStats(const Project& p)

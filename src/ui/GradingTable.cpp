@@ -52,8 +52,9 @@ std::string cellSummary(const gt::Question& q, const gt::Cell& c)
 {
     std::string line1;
     char b[48];
-    if (c.fullTick) {
-        // Full tick => full points and, by definition, all sub-questions answered.
+    if (gt::isFullMarks(q, c)) {
+        // Earns full marks (tick, or typed/stepped up to maxPoints) => green FULL,
+        // and by definition all sub-questions answered.
         std::snprintf(b, sizeof(b), "FULL %s  %d/%d", fmtNum(q.maxPoints).c_str(), q.subCount, q.subCount);
         line1 = b;
     } else if (!c.touched) {
@@ -74,7 +75,7 @@ void renderGradeCell(App& app, int i, int j)
     gt::Cell&     c = s.cells[static_cast<size_t>(j)];
 
     int pushed = 0;
-    if (c.fullTick) {
+    if (gt::isFullMarks(q, c)) {
         ImGui::PushStyleColor(ImGuiCol_Button, kGreenBtn);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kGreenBtnH);
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, kGreenBtnA);
@@ -172,17 +173,20 @@ void renderInlineEdit(App& app, int i, int j)
     const bool scoreEnter = ImGui::InputText("##inline", &app.gridEditBuf,
         ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue |
         ImGuiInputTextFlags_CallbackAlways, inlineEditCallback, &app);
+    if (ImGui::IsItemEdited()) app.gridEditScoreDirty = true; // an actual score change
     const ImVec2 rmin = ImGui::GetItemRectMin();
     ImVec2 rmax = ImGui::GetItemRectMax();
 
     // Space steps from the score into the last-page field. CharsDecimal keeps the space
     // out of the score buffer, so it is a clean hotkey; seed the field with any existing
-    // page so it can be edited rather than retyped.
-    if (!app.gridEditPageActive && ImGui::IsKeyPressed(ImGuiKey_Space)) {
+    // page so it can be edited rather than retyped. (suppressSpace swallows the very
+    // Space that opened the editor via Space, so it doesn't jump straight to the page.)
+    if (!app.gridEditPageActive && !app.gridEditSuppressSpace && ImGui::IsKeyPressed(ImGuiKey_Space)) {
         app.gridEditPageActive = true;
         app.gridEditPageBuf = c.lastPage;
         app.gridEditPageFocus = true;
     }
+    app.gridEditSuppressSpace = false; // one-frame guard
 
     // ---- last-page field (line 2), only once stepped into ----
     bool pageEnter = false;
@@ -218,18 +222,25 @@ void renderInlineEdit(App& app, int i, int j)
         return;
     }
     if (scoreEnter || pageEnter || tab) {
-        double v = std::strtod(app.gridEditBuf.c_str(), nullptr); // "" -> 0
-        const double em = gt::effectiveMax(q, c);  // can't inline past the locked ceiling
-        if (v < 0.0) v = 0.0;
-        if (v > em)  v = em;
-        c.awarded = v;
-        c.fullTick = false;        // an explicit number governs over a full tick
-        c.touched = true;
-        if (app.gridEditPageActive) {              // only overwrite the page if edited
-            const int pg = std::atoi(app.gridEditPageBuf.c_str());
-            c.lastPage = (pg > 0) ? std::to_string(pg) : std::string();
+        // Write only the fields actually edited, so opening via Space (§ handleGridKeyboard)
+        // to add just a last page leaves the score / FULL / blank state exactly as it was.
+        bool changed = false;
+        if (app.gridEditScoreDirty) {              // the score was retyped
+            double v = std::strtod(app.gridEditBuf.c_str(), nullptr); // "" -> 0
+            const double em = gt::effectiveMax(q, c);  // can't inline past the locked ceiling
+            if (v < 0.0) v = 0.0;
+            if (v > em)  v = em;
+            c.awarded = v;
+            c.fullTick = false;    // an explicit number governs; green (at max) comes from isFullMarks
+            c.touched = true;
+            changed = true;
         }
-        app.markDirty();
+        if (app.gridEditPageActive) {              // stepped into page: set it (a resume
+            const int pg = std::atoi(app.gridEditPageBuf.c_str()); // marker is not a grade,
+            std::string np = (pg > 0) ? std::to_string(pg) : std::string(); // so no `touched`)
+            if (np != c.lastPage) { c.lastPage = np; changed = true; }
+        }
+        if (changed) app.markDirty();
         app.gridEditing = false;
         app.gridEditPageActive = false;
         if (tab) { if (app.activeCol < M - 1) ++app.activeCol; }
@@ -454,10 +465,30 @@ void handleGridKeyboard(App& app)
             app.gridEditing = true;
             app.gridEditFocus = true;
             app.gridEditDeselect = true;
+            app.gridEditScoreDirty = true;    // a typed digit is a real score edit
+            app.gridEditSuppressSpace = false;
             app.gridEditPageActive = false;   // start on the score; Space steps to page
             app.gridEditPageBuf.clear();
             io.InputQueueCharacters.resize(0);
         }
+    }
+
+    // ---- Space opens the inline editor in "review" mode (no auto-typing) ----
+    // Seeds the score with the cell's current value but marks nothing edited, so you
+    // can add/adjust just one field (e.g. a last page on a green FULL cell, via a
+    // second Space) or Esc out — the score / FULL / blank state is preserved unless
+    // you actually retype it. (Guarded on !gridEditing so a same-frame digit wins.)
+    if (!app.gridEditing && !s.noSubmission && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+        if (gt::isFullMarks(q, cell)) app.gridEditBuf = fmtNum(q.maxPoints);
+        else if (cell.touched)        app.gridEditBuf = fmtNum(cell.awarded);
+        else                          app.gridEditBuf.clear();
+        app.gridEditing = true;
+        app.gridEditFocus = true;
+        app.gridEditDeselect = false;         // keep select-all: a first keystroke replaces the seed
+        app.gridEditScoreDirty = false;       // nothing edited yet -> commit leaves the score alone
+        app.gridEditSuppressSpace = true;     // swallow this Space (don't jump to the page field)
+        app.gridEditPageActive = false;
+        app.gridEditPageBuf.clear();
     }
 
     if (moved)
@@ -597,7 +628,7 @@ void gradingScreen(App& app)
 
     // ---- status bar ----
     ImGui::TextDisabled("%s", app.statusMsg.empty()
-        ? "Arrows move; type = points; +/- step (first - assumes full); Space adds last page; Enter/Tab commit; F2 edit; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+S saves."
+        ? "Arrows move; type or +/- for points; Space opens edit (Space again = last page); Enter/Tab commit; F2 full editor; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+S saves."
         : app.statusMsg.c_str());
 
     // ---- popups (opened here, after the table, using stored targets) ----

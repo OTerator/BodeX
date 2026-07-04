@@ -288,6 +288,8 @@ void App::applyLoadedProject(gt::Project&& p, const std::string& path)
     activeRow = activeCol = 0;      // selection indexes into the new grid
     gridEditing = false;            // drop any half-finished inline edit
     gridEditPageActive = false;
+    gridEditScoreDirty = false;
+    gridEditSuppressSpace = false;
     project = std::move(p);
     hasProject = true;
     projectPath = path;
@@ -360,6 +362,8 @@ void App::closeProject()
     activeRow = activeCol = 0;
     gridEditing = false;
     gridEditPageActive = false;
+    gridEditScoreDirty = false;
+    gridEditSuppressSpace = false;
     screen = Screen::Home;
     statusMsg = "Project closed.";
 }

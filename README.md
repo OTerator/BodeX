@@ -88,8 +88,9 @@ BODEX_DEMO=1 ./build/BodeX.exe
    type. → **Create Project**.
 2. **Right-click a cell** to toggle **full marks** (turns green); **hold and
    right-drag** to paint full marks across a whole **row or column** (direction
-   picked from your drag). **Left-click a cell** to open its editor: awarded points
-   (with **`-`/`+`** buttons that dock from full — first `-` assumes full marks),
+   picked from your drag). A cell that earns **full marks any way** — the tick, or a
+   score typed/stepped up to the max — shows green **FULL**. **Left-click a cell** to
+   open its editor: awarded points (with **`-`/`+`** buttons that dock from full),
    sub-questions answered, last page (a page number with `-`/`+` steppers), and a
    note. Sub-questions start all-answered; lower the count (equal split) or untick a
    part (custom split) and its points lock out of the awardable max. The **first**
@@ -99,14 +100,16 @@ BODEX_DEMO=1 ./build/BodeX.exe
    cell's second line.
 3. **Grade from the keyboard.** The selected cell has a blue outline. **Arrow
    keys** move the selection; **type a number** to set awarded points inline, or
-   **`+`/`-`** to step the score by one in place — the first **`-`** on a fresh cell
-   assumes full marks and docks from there (`+` builds up from 0). After typing a
-   number you can optionally press **Space** to type the **last page** on the same cell (leave it out
-   to keep any existing page). **Enter** commits and moves down, **Tab** commits and
-   moves right, **Esc** cancels. **`f`** toggles full marks, **`n`** toggles *No
-   submission* for the row, **Del** clears the cell, and **F2** opens the full cell
-   editor. Clicking a cell also moves the selection there, so mouse and keyboard mix
-   freely.
+   **`+`/`-`** to step the score by one in a single press — **`-`** docks a point from
+   full (a blank cell jumps straight to full-minus-one) and **`+`** builds up from 0;
+   step back up to the max and the cell reads green **FULL** again. Press **Space** to
+   open the inline editor without typing (nothing changes until you edit a field);
+   press **Space again** to add/change the **last page** — handy for tagging a page on
+   a green FULL cell without disturbing its score. **Enter** commits and moves down,
+   **Tab** commits and moves right, **Esc** cancels. **`f`** toggles full marks, **`n`**
+   toggles *No submission* for the row, **Del** clears the cell, and **F2** opens the
+   full cell editor. Clicking a cell also moves the selection there, so mouse and
+   keyboard mix freely.
 4. Click a **student ID** to mark *No submission* (row scores 0).
 5. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
    with unsaved changes prompts to Save / Discard / Cancel.

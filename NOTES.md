@@ -48,9 +48,18 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
   entry (Enter/Tab commit + advance, Esc cancels); `f` full marks, `n`
   no-submission, `Del` clears, `F2` opens the full editor. See spec.md §9.
   - **`+`/`-` point stepping** (done): standing on a cell, `+`/`-` steps awarded ±1
-    in place, and the cell editor's `-`/`+` buttons do the same — both mirror the
-    sub-question sync, so the first `-` on a blank/full cell assumes full marks and
-    docks from there (`+` builds up from 0). `gt::stepAwarded`, spec.md §6/§9.
+    **in one press** — `-` docks from full (a blank cell jumps straight to
+    full-minus-one), `+` builds up from 0; the cell editor's `-`/`+` buttons do the
+    same. `gt::stepAwarded`, spec.md §6/§9.
+  - **Full-mark merge** (done): a cell that earns full marks *any* way — the `f` tick
+    or a score typed/stepped to the max — reads green **FULL** (`gt::isFullMarks`), so
+    the old blue `20 4/4` vs green `FULL 20 4/4` split is gone. spec.md §6.
+  - **`Space` opens the inline editor** (done): opens without typing (review mode) and
+    writes only fields you actually edit, so you can add a **last page** to a green
+    FULL cell (Space → Space → page → Enter) without opening the config popup or
+    disturbing the score. spec.md §9.
+  - *Future:* a **configurable step size** for `+`/`-` (e.g. 0.5) — belongs in the
+    settings panel below.
 - ~~**Tick sub-questions to auto-compute the score**~~ — **done** (v2 + sync): cells
   default to all-answered and skipped sub-questions **lock out** their points (equal
   split by count; custom split by per-sub-question ticks, deducting each part's
@@ -87,7 +96,8 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 - Search / jump to a student ID.
 - Per-question column show/hide & reorder.
 - Compact-cell eliding for very long `lastPage` values (middle-elide / tooltip).
-- Settings screen (font size / theme); per-question rubric notes at config time.
+- Settings screen (font size / theme; **`+`/`-` step size** e.g. 0.5 vs 1;
+  per-question rubric notes at config time).
 - CSV/Excel *import* of a roster.
 
 ## Deferred: dock/pin a preview next to the Total column
