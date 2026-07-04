@@ -35,11 +35,15 @@ double projectMaxTotal(const Project& p);
 // warning; storage is not silently capped).
 bool cellOverMax(const Question& q, const Cell& c);
 
-// Editor helpers: change which sub-questions count as answered while deducting
-// from full marks. Locking a sub-question subtracts its points from `awarded`
-// (unlocking adds them back); `awarded` is then clamped into [0, effectiveMax] and
-// `fullTick` is cleared if any sub-question is now skipped. Both mark the cell
-// touched. GUI-free so the "8 -> 5.5" behavior is unit-tested.
+// Editor helpers: change which sub-questions count as answered.
+//   * First interaction (cell still blank `!touched`, or a full tick): the ticked
+//     sub-questions are assumed correct, so `awarded` is *synced* to `effectiveMax`
+//     for the new state (a blank cell starts at 0, so nudging it by one share would
+//     wrongly land at 0 — sync it up to the real ceiling instead).
+//   * Afterwards: locking a sub-question subtracts its points from `awarded`
+//     (unlocking adds them back), clamped into [0, effectiveMax].
+// Either way `fullTick` is cleared once a sub-question is skipped and the cell is
+// marked touched. GUI-free so the sync and the "8 -> 5.5" behavior are unit-tested.
 void setAnsweredCount(const Question& q, Cell& c, int newAnswered);        // Equal split
 void setSubAnswered(const Question& q, Cell& c, int index, bool answered); // Custom split
 

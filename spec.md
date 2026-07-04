@@ -65,6 +65,15 @@ mingw32-make clean    # remove build/
 - The `test` target compiles only `tests/test_core.cpp` + `model/Scoring.cpp` +
   `model/Serialization.cpp` + `model/AppConfig.cpp` (no ImGui) and links
   `-lshell32`.
+- **No header-dependency tracking.** The compile rule is `$(OBJDIR)/%.o: %.cpp`
+  only — it does **not** depend on headers. So editing a header (e.g. `App.h`,
+  `Project.h`) does **not** recompile the `.cpp` files that include it. If the edit
+  changes a struct's layout (add/remove/reorder a member of `App`, `Cell`, …), the
+  un-recompiled TUs keep the **old layout** → an ODR/layout mismatch across object
+  files → **memory corruption** (intermittent `0xC0000005` / `0xC0000374` heap
+  crashes, "far from the cause"). **After editing any header, run
+  `mingw32-make clean && mingw32-make`** (an incremental build is unsafe). This is a
+  known footgun until the Makefile grows `-MMD -MP` auto-dep generation.
 
 **Demo modes** (env var, in-memory only, never saved):
 - `BODEX_DEMO=1` → launch straight into a populated sample grid.
@@ -202,9 +211,15 @@ Per-cell effective points, **highest precedence first**:
 - `cellOverMax(q, c)` = grader typed more than the **effectiveMax** (visual orange
   warning only; storage is never silently capped).
 - `setAnsweredCount` / `setSubAnswered` (Scoring.*) are the editor helpers that
-  lock/unlock sub-questions: locking deducts the sub-question's points from
-  `awarded` (so 8/10 → 5.5/7.5 when one of four equal sub-qs is skipped), unlocking
-  adds them back, then clamps `awarded` into `[0, effectiveMax]`. GUI-free/tested.
+  lock/unlock sub-questions. **First interaction** on a cell that is still blank
+  (`!touched`) or a full tick: the ticked sub-questions are assumed correct, so
+  `awarded` is *synced* to `effectiveMax` for the new state (a blank cell's `awarded`
+  starts at 0, so nudging it by one share would wrongly land at 0 — sync it up
+  instead; this is why 4/4 → 3/4 on a fresh 20-pt cell now reads 15/15, not 0).
+  **Afterwards:** locking deducts the sub-question's points from `awarded` (so 8/10 →
+  5.5/7.5 when one of four equal sub-qs is skipped), unlocking adds them back, then
+  clamps `awarded` into `[0, effectiveMax]`. Either way `fullTick` clears once a
+  sub-question is skipped and the cell is marked `touched`. GUI-free/tested.
 - `classStats(p)` = students / graded (no-submission or any touched-or-full cell) /
   average / min / max.
 
@@ -293,10 +308,11 @@ In `GradingTable.cpp`:
 - **Click a student ID** = student menu (No submission toggle).
 - **Keyboard-first grading** (`handleGridKeyboard`): a selected "active" cell
   (`App::activeRow/activeCol`, blue outline) driven from the keyboard — **arrows**
-  move it; **digits/`.`/`-`** begin an inline awarded-points edit; **Enter**/**Tab**
-  commit and advance (down / right; Shift+Tab left); **Esc** cancels; **`f`**/**`n`**
-  toggle full-marks / the row's no-submission; **Del**/**Backspace** clear the cell;
-  **F2** opens the full editor. Mechanics detailed below.
+  move it; **digits/`.`/`-`** begin an inline awarded-points edit; **Space** (mid-edit)
+  steps into an inline **last-page** field; **Enter**/**Tab** commit and advance
+  (down / right; Shift+Tab left); **Esc** cancels; **`f`**/**`n`** toggle full-marks /
+  the row's no-submission; **Del**/**Backspace** clear the cell; **F2** opens the full
+  editor. Mechanics detailed below.
 
   (L/R were swapped deliberately: the left-click editor uses `IsItemClicked`, which
   is occlusion-aware, so it won't fire for cells hidden under a floating image
@@ -346,13 +362,20 @@ near the top of `gradingScreen`, **before** `BeginTable`, so the selection / scr
   it even when scrolled off, so it can be outlined and scrolled to. `gridScrollToActive`
   triggers `SetScrollHereY`/`SetScrollHereX(0.5)` on the active cell (vertical is
   reliable; horizontal is best-effort — a fully clipped column registers no item rect).
-- **Inline edit (`renderInlineEdit`)** replaces the active cell's button with an
-  `InputText(CharsDecimal|EnterReturnsTrue|CallbackAlways)` seeded with the typed
-  digit. Gotcha handled: `SetKeyboardFocusHere` **selects-all** the seed, so the
+- **Inline edit (`renderInlineEdit`)** replaces the active cell's button with a score
+  `InputText(CharsDecimal|EnterReturnsTrue|CallbackAlways)` (line 1) seeded with the
+  typed digit. Gotcha handled: `SetKeyboardFocusHere` **selects-all** the seed, so the
   next keystroke would replace the first digit ("7.5" → ".5"). `inlineEditCallback`
   collapses that initial selection **once** (guarded by `gridEditDeselect`, detected
-  via a live `SelectionStart != SelectionEnd`), so later digits append. Commit does
-  `awarded = strtod(buf)`, `fullTick = false`, `touched = true`; **Esc** discards.
+  via a live `SelectionStart != SelectionEnd`), so later digits append. **Space** steps
+  into a second `lp:` last-page `InputText` (line 2), tracked by `gridEditPageActive` /
+  `gridEditPageBuf` / `gridEditPageFocus` and seeded with the cell's current `lastPage`
+  (`CharsDecimal` keeps the space out of the score buffer, so it is a clean hotkey).
+  Commit (Enter → down, Tab → right, from either field) does `awarded = strtod(buf)`,
+  `fullTick = false`, `touched = true`, and — **only when the page field was stepped
+  into** — `lastPage = to_string(atoi(pageBuf))` (empty clears it; a score-only commit
+  leaves the existing page untouched). **Esc** discards. The inline-edit state is reset
+  in `applyLoadedProject`/`closeProject` alongside `gridEditing`.
 - Toggling full marks via **`f`** leaves `touched` alone (the §6 invariant), same as
   the mouse paint. Active-cell state lives on `App` (`activeRow/Col`, `gridEditing`,
   `gridEditBuf`, `gridEditFocus`, `gridEditDeselect`, `gridScrollToActive`) and is

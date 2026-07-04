@@ -91,14 +91,19 @@ BODEX_DEMO=1 ./build/BodeX.exe
    picked from your drag). **Left-click a cell** to open its editor: awarded points,
    sub-questions answered, last page (a page number with `-`/`+` steppers), and a
    note. Sub-questions start all-answered; lower the count (equal split) or untick a
-   part (custom split) and its points are deducted from the score and locked out of
-   the awardable max. The last page shows as `lp: N` on the cell's second line.
+   part (custom split) and its points lock out of the awardable max. The **first**
+   such change on a fresh cell awards the remaining full marks (the still-ticked parts
+   are assumed correct — e.g. 4/4 → 3/4 on a 20-pt question gives 15/15); adjust from
+   there and later changes deduct/add per part. The last page shows as `lp: N` on the
+   cell's second line.
 3. **Grade from the keyboard.** The selected cell has a blue outline. **Arrow
-   keys** move the selection; **type a number** to set awarded points inline
-   (**Enter** commits and moves down, **Tab** commits and moves right, **Esc**
-   cancels). **`f`** toggles full marks, **`n`** toggles *No submission* for the
-   row, **Del** clears the cell, and **F2** opens the full cell editor. Clicking a
-   cell also moves the selection there, so mouse and keyboard mix freely.
+   keys** move the selection; **type a number** to set awarded points inline, then
+   optionally press **Space** to type the **last page** on the same cell (leave it out
+   to keep any existing page). **Enter** commits and moves down, **Tab** commits and
+   moves right, **Esc** cancels. **`f`** toggles full marks, **`n`** toggles *No
+   submission* for the row, **Del** clears the cell, and **F2** opens the full cell
+   editor. Clicking a cell also moves the selection there, so mouse and keyboard mix
+   freely.
 4. Click a **student ID** to mark *No submission* (row scores 0).
 5. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
    with unsaved changes prompts to Save / Discard / Cancel.

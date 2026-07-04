@@ -85,9 +85,12 @@ public:
     int         activeRow = 0;
     int         activeCol = 0;
     bool        gridEditing = false;        // inline awarded-points edit in progress
-    std::string gridEditBuf;                // inline edit text buffer
+    std::string gridEditBuf;                // inline edit text buffer (score)
     bool        gridEditFocus = false;      // SetKeyboardFocusHere on next draw
     bool        gridEditDeselect = false;   // collapse InputText's auto-select-all once focused
+    bool        gridEditPageActive = false; // stepped into the last-page field (via Space)
+    std::string gridEditPageBuf;            // inline last-page text buffer
+    bool        gridEditPageFocus = false;  // SetKeyboardFocusHere on the page field next draw
     bool        gridScrollToActive = false; // scroll active cell into view next draw
     bool        anyPreviewFocused = false;  // an image-preview window has the keyboard
                                             // (recomputed each frame; grid keys yield to it)

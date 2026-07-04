@@ -149,10 +149,13 @@ int inlineEditCallback(ImGuiInputTextCallbackData* data)
     return 0;
 }
 
-// Inline numeric quick-entry drawn in place of the active cell's button while
-// gridEditing is on. Type digits to set awarded points; Enter commits and moves
-// down, Tab commits and moves right, Esc discards. Only used for non-no-submission
-// cells (the caller guarantees this).
+// Inline quick-entry drawn in place of the active cell's button while gridEditing is
+// on. Line 1 is the awarded-points field (seeded with the digit that began the edit);
+// pressing Space steps into a line-2 "lp:" last-page field so the resume marker can be
+// set without opening the full editor. Enter commits and moves down, Tab commits and
+// moves right (from either field), Esc discards. A commit that never stepped into the
+// page field leaves any existing last page untouched; an empty page field clears it.
+// Only used for non-no-submission cells (the caller guarantees this).
 void renderInlineEdit(App& app, int i, int j)
 {
     gt::Cell&     c = app.project.students[static_cast<size_t>(i)].cells[static_cast<size_t>(j)];
@@ -160,20 +163,47 @@ void renderInlineEdit(App& app, int i, int j)
     const int N = static_cast<int>(app.project.students.size());
     const int M = static_cast<int>(app.project.questions.size());
 
+    // ---- score field (line 1) ----
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (app.gridEditFocus) {
         ImGui::SetKeyboardFocusHere();
         app.gridEditFocus = false;
     }
-    const bool enter = ImGui::InputText("##inline", &app.gridEditBuf,
+    const bool scoreEnter = ImGui::InputText("##inline", &app.gridEditBuf,
         ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue |
         ImGuiInputTextFlags_CallbackAlways, inlineEditCallback, &app);
+    const ImVec2 rmin = ImGui::GetItemRectMin();
+    ImVec2 rmax = ImGui::GetItemRectMax();
+
+    // Space steps from the score into the last-page field. CharsDecimal keeps the space
+    // out of the score buffer, so it is a clean hotkey; seed the field with any existing
+    // page so it can be edited rather than retyped.
+    if (!app.gridEditPageActive && ImGui::IsKeyPressed(ImGuiKey_Space)) {
+        app.gridEditPageActive = true;
+        app.gridEditPageBuf = c.lastPage;
+        app.gridEditPageFocus = true;
+    }
+
+    // ---- last-page field (line 2), only once stepped into ----
+    bool pageEnter = false;
+    if (app.gridEditPageActive) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("lp:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (app.gridEditPageFocus) {
+            ImGui::SetKeyboardFocusHere();
+            app.gridEditPageFocus = false;
+        }
+        pageEnter = ImGui::InputText("##inline_lp", &app.gridEditPageBuf,
+            ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue);
+        rmax = ImGui::GetItemRectMax();   // extend the hit-rect / highlight over both lines
+    }
+
     const bool tab = ImGui::IsKeyPressed(ImGuiKey_Tab);
     const bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape);
 
     // Record the rect (so the paint hit-test still sees a cell here) + highlight.
-    const ImVec2 rmin = ImGui::GetItemRectMin();
-    const ImVec2 rmax = ImGui::GetItemRectMax();
     g_cellRects.push_back({ rmin, rmax, i, j });
     ImGui::GetWindowDrawList()->AddRect(rmin, rmax, IM_COL32(90, 160, 255, 255), 0.0f, 0, 2.5f);
     if (app.gridScrollToActive) {
@@ -184,9 +214,10 @@ void renderInlineEdit(App& app, int i, int j)
 
     if (esc) {                     // discard: leave the cell as it was
         app.gridEditing = false;
+        app.gridEditPageActive = false;
         return;
     }
-    if (enter || tab) {
+    if (scoreEnter || pageEnter || tab) {
         double v = std::strtod(app.gridEditBuf.c_str(), nullptr); // "" -> 0
         const double em = gt::effectiveMax(q, c);  // can't inline past the locked ceiling
         if (v < 0.0) v = 0.0;
@@ -194,8 +225,13 @@ void renderInlineEdit(App& app, int i, int j)
         c.awarded = v;
         c.fullTick = false;        // an explicit number governs over a full tick
         c.touched = true;
+        if (app.gridEditPageActive) {              // only overwrite the page if edited
+            const int pg = std::atoi(app.gridEditPageBuf.c_str());
+            c.lastPage = (pg > 0) ? std::to_string(pg) : std::string();
+        }
         app.markDirty();
         app.gridEditing = false;
+        app.gridEditPageActive = false;
         if (tab) { if (app.activeCol < M - 1) ++app.activeCol; }
         else     { if (app.activeRow < N - 1) ++app.activeRow; }
         app.gridScrollToActive = true;
@@ -400,6 +436,8 @@ void handleGridKeyboard(App& app)
             app.gridEditing = true;
             app.gridEditFocus = true;
             app.gridEditDeselect = true;
+            app.gridEditPageActive = false;   // start on the score; Space steps to page
+            app.gridEditPageBuf.clear();
             io.InputQueueCharacters.resize(0);
         }
     }
@@ -541,7 +579,7 @@ void gradingScreen(App& app)
 
     // ---- status bar ----
     ImGui::TextDisabled("%s", app.statusMsg.empty()
-        ? "Arrows move; type = points; Enter/Tab commit; F2 edit; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+S saves."
+        ? "Arrows move; type = points; Space adds last page; Enter/Tab commit; F2 edit; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+S saves."
         : app.statusMsg.c_str());
 
     // ---- popups (opened here, after the table, using stored targets) ----

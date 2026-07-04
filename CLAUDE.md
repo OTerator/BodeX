@@ -54,6 +54,8 @@ editor open), or `=3` (New Project screen). Demo data is in-memory only.
   `clamp(awarded, 0, effectiveMax)`. **Skipped sub-questions lock out their points**
   (`effectiveMax = maxPoints − lockedSubPoints`): Equal deducts `maxPoints/subCount`
   per skip, Custom the specific `subPoints`. (Pre-v2, `X/Y` was reference-only.)
+  The **first** sub-question interaction on a blank/full cell *syncs* `awarded` to
+  `effectiveMax` (ticked parts assumed correct); later ones deduct/add per share.
 - **Toggling/painting full marks must not set `cell.touched`** — a full cell
   counts via `fullTick`; leaving `touched` alone lets un-fulling a blank cell
   return to blank instead of a stray `0`.
@@ -67,7 +69,10 @@ editor open), or `=3` (New Project screen). Demo data is in-memory only.
 
 ## Definition of done (verify, don't assume)
 
-1. `mingw32-make` builds with no warnings.
+1. `mingw32-make` builds with no warnings. **If you edited a header, run
+   `mingw32-make clean` first** — the Makefile has no header-dep tracking, so a stale
+   incremental build mixes old/new struct layouts and corrupts memory at runtime
+   (intermittent `0xC0000005`/`0xC0000374`). See spec.md §3.
 2. `mingw32-make test` passes; add/adjust cases when you touch model, scoring, or
    serialization.
 3. For UI changes, **verify visually by screenshot** — this is a real Win32 window.

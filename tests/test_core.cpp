@@ -279,7 +279,8 @@ static void testEditorAdjust()
     Cell& cc = p.students[0].cells[1];
 
     // Equal: graded 8 with all 4 answered; skip one -> 8 - 2.5 = 5.5, ceiling 7.5.
-    ce.awarded = 8.0; ce.subAnswered = 4;
+    // touched=true marks it already-scored, so the deduct path runs (not the sync).
+    ce.awarded = 8.0; ce.subAnswered = 4; ce.touched = true;
     setAnsweredCount(qe, ce, 3);
     CHECK_NEAR(ce.awarded, 5.5);
     CHECK_NEAR(effectiveMax(qe, ce), 7.5);
@@ -291,8 +292,9 @@ static void testEditorAdjust()
     CHECK_NEAR(ce.awarded, 8.0);
     CHECK_NEAR(effectiveMax(qe, ce), 10.0);
 
-    // Custom: graded 10; skip the 2-pt sub-q -> 8 (ceiling 8).
-    cc.awarded = 10.0; cc.subChecks = {1, 1, 1}; cc.subAnswered = 3;
+    // Custom: graded 10; skip the 2-pt sub-q -> 8 (ceiling 8). touched=true so the
+    // deduct path runs rather than the first-interaction sync.
+    cc.awarded = 10.0; cc.subChecks = {1, 1, 1}; cc.subAnswered = 3; cc.touched = true;
     setSubAnswered(qc, cc, 1, false);
     CHECK_NEAR(cc.awarded, 8.0);
     CHECK_NEAR(effectiveMax(qc, cc), 8.0);
@@ -308,6 +310,53 @@ static void testEditorAdjust()
     setSubAnswered(qc, cc, 1, true);
     CHECK_NEAR(cc.awarded, 3.0);
     CHECK_NEAR(effectiveMax(qc, cc), 3.0);
+}
+
+// First interaction with the sub-question controls on a blank (or full) cell syncs
+// `awarded` to the effective max — the answered parts are assumed correct — rather
+// than nudging the 0/implied-full placeholder. Later edits deduct/add as usual.
+static void testEditorFirstInteractionSync()
+{
+    Question qe; qe.title = "Qe"; qe.maxPoints = 20.0; qe.subCount = 4; qe.split = SplitMode::Equal;
+    Question qc; qc.title = "Qc"; qc.maxPoints = 10.0; qc.subCount = 3; qc.split = SplitMode::Custom;
+    qc.subPoints = {7.0, 2.0, 1.0};
+    Project p = makeProject("Sync", 1, {qe, qc});
+
+    // Equal, blank cell (the reported bug): 4/4 -> 3/4 syncs awarded to effMax 15,
+    // not 0. A subsequent 3/4 -> 2/4 then deducts one share (15 - 5 = 10).
+    Cell& ce = p.students[0].cells[0];
+    CHECK(!ce.touched);
+    setAnsweredCount(qe, ce, 3);
+    CHECK_NEAR(ce.awarded, 15.0);
+    CHECK_NEAR(effectiveMax(qe, ce), 15.0);
+    CHECK(ce.subAnswered == 3);
+    CHECK(!ce.fullTick);
+    CHECK(ce.touched);
+    setAnsweredCount(qe, ce, 2);          // now touched -> deduct one more share
+    CHECK_NEAR(ce.awarded, 10.0);
+    setAnsweredCount(qe, ce, 4);          // add both shares back -> full 20
+    CHECK_NEAR(ce.awarded, 20.0);
+    CHECK_NEAR(effectiveMax(qe, ce), 20.0);
+
+    // Equal, full cell: decrementing must sync to effMax (15), not drop to 0.
+    Cell& ce2 = p.students[0].cells[0] = blankCell(qe);
+    ce2.fullTick = true; ce2.touched = true;   // an editor full tick
+    setAnsweredCount(qe, ce2, 3);
+    CHECK_NEAR(ce2.awarded, 15.0);
+    CHECK(!ce2.fullTick);
+
+    // Custom, blank cell: unticking the 2-pt sub-question on first touch syncs awarded
+    // to effMax 8 (all other parts correct); a second untick (7-pt) then deducts to 1.
+    Cell& cc = p.students[0].cells[1];
+    CHECK(!cc.touched);
+    setSubAnswered(qc, cc, 1, false);     // untick the 2-pt part
+    CHECK_NEAR(cc.awarded, 8.0);
+    CHECK_NEAR(effectiveMax(qc, cc), 8.0);
+    CHECK(cc.subAnswered == 2);
+    CHECK(cc.touched);
+    setSubAnswered(qc, cc, 0, false);     // now touched -> deduct the 7-pt part
+    CHECK_NEAR(cc.awarded, 1.0);
+    CHECK_NEAR(effectiveMax(qc, cc), 1.0);
 }
 
 // subChecks survive a round-trip; a pre-v2 file loads as all-answered so its old
@@ -355,6 +404,7 @@ int main()
     testRecentAliasSafe();
     testSubQuestionDeduction();
     testEditorAdjust();
+    testEditorFirstInteractionSync();
     testSubChecksAndMigration();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);

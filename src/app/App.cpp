@@ -287,6 +287,7 @@ void App::applyLoadedProject(gt::Project&& p, const std::string& path)
     previews.clear();               // stale windows would index into the old project
     activeRow = activeCol = 0;      // selection indexes into the new grid
     gridEditing = false;            // drop any half-finished inline edit
+    gridEditPageActive = false;
     project = std::move(p);
     hasProject = true;
     projectPath = path;
@@ -358,6 +359,7 @@ void App::closeProject()
     addImagePendingFile.clear();
     activeRow = activeCol = 0;
     gridEditing = false;
+    gridEditPageActive = false;
     screen = Screen::Home;
     statusMsg = "Project closed.";
 }

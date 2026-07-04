@@ -47,11 +47,14 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
   (blue outline) moves with the arrow keys; type a number for inline awarded-points
   entry (Enter/Tab commit + advance, Esc cancels); `f` full marks, `n`
   no-submission, `Del` clears, `F2` opens the full editor. See spec.md §9.
-- **Tick sub-questions to auto-compute the score** — *partially delivered* (v2):
-  cells now default to all-answered and skipped sub-questions **lock out** their
-  points (equal split by count; custom split by per-sub-question ticks, deducting
-  each part's `subPoints`). Still open if wanted: a pure "check the correct parts →
-  auto-*sum* `awarded` from scratch" mode (this is the inverse, deduct-from-full).
+- ~~**Tick sub-questions to auto-compute the score**~~ — **done** (v2 + sync): cells
+  default to all-answered and skipped sub-questions **lock out** their points (equal
+  split by count; custom split by per-sub-question ticks, deducting each part's
+  `subPoints`). The **first** tick/count interaction on a blank or full cell now
+  *syncs* `awarded` to the effective max (the still-ticked parts are assumed correct),
+  so a fresh 20-pt / 4-sub cell dropped to 3/4 reads 15/15 instead of 0; later edits
+  deduct/add per share. This effectively covers the "check the correct parts" case;
+  a dedicated pure auto-*sum*-from-scratch mode is no longer needed.
 
 **Data safety**
 - **Autosave + crash recovery** — periodic autosave to `<project>.autosave`

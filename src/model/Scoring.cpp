@@ -70,10 +70,20 @@ void setAnsweredCount(const Question& q, Cell& c, int newAnswered)
 {
     if (newAnswered < 0)          newAnswered = 0;
     if (newAnswered > q.subCount) newAnswered = q.subCount;
-    c.awarded += (newAnswered - c.subAnswered) * equalShare(q); // -: lock, +: unlock
-    c.subAnswered = newAnswered;
-    if (newAnswered < q.subCount) c.fullTick = false;
-    clampAwardedToEffMax(q, c);
+    if (!c.touched || c.fullTick) {
+        // First real interaction on a blank or full cell: the still-answered
+        // sub-questions are assumed correct, so award the full effective max for the
+        // new count (blank cells start at 0, not the implied full — sync them here).
+        c.fullTick = false;
+        c.subAnswered = newAnswered;
+        c.awarded = effectiveMax(q, c);
+    } else {
+        // Subsequent edits deduct/add just the changed share (the "8 -> 5.5" case).
+        c.awarded += (newAnswered - c.subAnswered) * equalShare(q); // -: lock, +: unlock
+        c.subAnswered = newAnswered;
+        if (newAnswered < q.subCount) c.fullTick = false;
+        clampAwardedToEffMax(q, c);
+    }
     c.touched = true;
 }
 
@@ -83,17 +93,25 @@ void setSubAnswered(const Question& q, Cell& c, int index, bool answered)
         return;
     if (static_cast<int>(c.subChecks.size()) != q.subCount)
         c.subChecks.assign(static_cast<size_t>(q.subCount), 1);
-    const bool was = c.subChecks[static_cast<size_t>(index)] != 0;
+    const bool sync = !c.touched || c.fullTick; // first interaction: assume ticked correct
+    const bool was  = c.subChecks[static_cast<size_t>(index)] != 0;
     c.subChecks[static_cast<size_t>(index)] = answered ? 1 : 0;
-    if (was != answered) {
-        const double kpts = index < static_cast<int>(q.subPoints.size())
-                            ? q.subPoints[static_cast<size_t>(index)] : 0.0;
-        c.awarded += answered ? kpts : -kpts;
-    }
-    if (!answered) c.fullTick = false;
     int cnt = 0; for (char v : c.subChecks) if (v) ++cnt;
     c.subAnswered = cnt;               // keep the count for X/Y display
-    clampAwardedToEffMax(q, c);
+    if (sync) {
+        // Blank or full cell: award the full effective max (all ticked parts correct)
+        // instead of nudging the 0/implied-full placeholder by one sub-question.
+        c.fullTick = false;
+        c.awarded = effectiveMax(q, c);
+    } else {
+        if (was != answered) {
+            const double kpts = index < static_cast<int>(q.subPoints.size())
+                                ? q.subPoints[static_cast<size_t>(index)] : 0.0;
+            c.awarded += answered ? kpts : -kpts;
+        }
+        if (!answered) c.fullTick = false;
+        clampAwardedToEffMax(q, c);
+    }
     c.touched = true;
 }
 
