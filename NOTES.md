@@ -4,24 +4,35 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 
 ## Known issues
 
-- **Image-preview click-through to the grid.** While the floating image-preview
-  window is open, dragging it with the mouse over the area where the grid sits
-  underneath also drives the grid's cell gesture, marking cells. Root cause: the
-  paint gesture (`handlePaintGesture` in `GradingTable.cpp`) reads the raw mouse
-  state and hit-tests `g_cellRects` by position, so it fires for cells that are
-  visually *occluded* by the preview window (it ignores z-order / which window is
-  hovered). The per-cell editor open uses `IsItemClicked`, which is occlusion-aware,
-  so it does not have this problem.
-  - **Plaster applied (done):** swapped cell buttons — left-click now opens the
-    editor (occlusion-aware), right-click / right-drag does full marks. Since the
-    preview is dragged with the *left* button, this stops the accidental marking
-    for the common case. it is demanded by the author that the implementation
-    remains this way as it is significantly more comfortable.
-  - **Proper fix (TODO):** gate `handlePaintGesture` on the grading window being
-    the hovered/topmost window at the mouse — e.g. only run it when
-    `ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)` for the grading window
-    is true (and no popup is open). Then the gesture never fires under the preview
-    or any floating window, and the L/R convention becomes a free choice again.
+- *(none currently — see "Resolved" below)*
+
+## Resolved
+
+- **Can't quit while a preview is open (fixed).** With an image preview open,
+  clicking the X (or Ctrl+N/O, File → Exit) popped the *Unsaved Changes* modal, but
+  the focused preview window rendered *above* it and swallowed the
+  Save/Discard/Cancel clicks — the app could not be closed. **Fix:**
+  `imagePreviewWindows` early-returns while `IsPopupOpen("Unsaved Changes")`, so
+  previews are suppressed while the modal is up and reappear on Cancel. Sibling to
+  the preview-over-**grid** paint fix below.
+- **Menu-invoked guard never showed the modal when dirty (fixed).** Found while
+  verifying the above. `guard()` called `ImGui::OpenPopup` at its call site; from a
+  File-menu item that runs under the menu's ID stack, so the popup id never matched
+  the root-level `BeginPopupModal` and the modal silently never appeared — File →
+  New/Open/Close/Exit just no-oped on a dirty project. **Fix:** `guard` now sets
+  `openGuardPopup_` and the `OpenPopup` is deferred into `renderUnsavedPrompt`
+  (same id stack as the modal), so every caller — menu, Ctrl+N/O, and the X button
+  — resolves correctly.
+- **Image-preview click-through to the grid (fixed).** Dragging a floating preview
+  over the grid used to drive the cell paint gesture, marking occluded cells,
+  because `handlePaintGesture` (`GradingTable.cpp`) reads raw mouse state and
+  hit-tests `g_cellRects` by position, blind to z-order. **Proper fix applied:**
+  `handlePaintGesture` now early-outs unless the grading window is hovered
+  (`IsWindowHovered(ImGuiHoveredFlags_ChildWindows | AllowWhenBlockedByActiveItem)`),
+  so the gesture never fires under a preview or any floating window.
+  - The earlier plaster — left-click opens the editor (occlusion-aware),
+    right-click / right-drag does full marks — is **kept**: the author finds L=edit
+    / R=full significantly more comfortable, independent of the occlusion fix.
 
 ## Feature ideas (roadmap)
 
@@ -32,12 +43,15 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 - **Question-by-question focus mode** — grade one question for all students, then
   the next, with next/prev-student navigation (matches how the user grades; the
   "last page" markers exist for exactly this).
-- **Keyboard-first grading + inline quick-entry** — arrow keys to move between
-  cells, type a number to set points, keys for full/no-submission, Enter/Tab to
-  advance; click-to-type inline instead of always opening the popup.
-- **Tick sub-questions to auto-compute the score** — the model already stores
-  per-sub-question `subPoints`; let the grader check which sub-parts are correct
-  and auto-sum `awarded` (+ fill `X/Y`).
+- ~~**Keyboard-first grading + inline quick-entry**~~ — **done:** a selected cell
+  (blue outline) moves with the arrow keys; type a number for inline awarded-points
+  entry (Enter/Tab commit + advance, Esc cancels); `f` full marks, `n`
+  no-submission, `Del` clears, `F2` opens the full editor. See spec.md §9.
+- **Tick sub-questions to auto-compute the score** — *partially delivered* (v2):
+  cells now default to all-answered and skipped sub-questions **lock out** their
+  points (equal split by count; custom split by per-sub-question ticks, deducting
+  each part's `subPoints`). Still open if wanted: a pure "check the correct parts →
+  auto-*sum* `awarded` from scratch" mode (this is the inverse, deduct-from-full).
 
 **Data safety**
 - **Autosave + crash recovery** — periodic autosave to `<project>.autosave`
@@ -51,7 +65,11 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 
 **Images (extend the current feature)**
 - **Paste screenshot from clipboard (Ctrl+V)** to attach without a file dialog.
-- **Pinned / side-by-side previews** (question + its solution together).
+- ~~Side-by-side previews (question + its solution together)~~ — **done:** previews
+  are multiple non-modal windows now (`App::previews`); open both and place them
+  side by side.
+- **Pinned preview** — a preview that snaps to a fixed, non-overlapping strip on
+  the right of the grid (still open; see the deferred docking note at the bottom).
 
 **Identity & rubric**
 - **Roster import (IDs → names)** from CSV, shown in the ID column and exports.
@@ -64,3 +82,20 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 - Compact-cell eliding for very long `lastPage` values (middle-elide / tooltip).
 - Settings screen (font size / theme); per-question rubric notes at config time.
 - CSV/Excel *import* of a roster.
+
+## Deferred: dock/pin a preview next to the Total column
+
+Considered during the preview UX overhaul and **deferred** in favour of the
+multiple free-floating windows (`App::previews`) + wheel-to-flip flow, which
+covers the same need more cheaply. Revisit only if that flow proves insufficient.
+
+The user's original idea was to drag a preview into the header row so it "connects"
+to the right of the Total column — i.e. a docked pane that never overlaps the grid.
+Two ways to build it if picked up:
+- **Custom right-side split (no new deps):** reserve a fixed-width strip on the
+  right of the grading viewport, shrink the grid's `Begin`/table region to the
+  remaining width, and draw the active preview there each frame (non-movable).
+  Fits the current non-docking ImGui and the `io.IniFilename=nullptr` invariant.
+- **Real ImGui docking:** swap the vendored ImGui to the *docking* branch and add
+  a dockspace. More powerful (drag-to-dock, tabs) but touches the build, the
+  backends, and the self-contained/no-ini invariant — the heavier option.

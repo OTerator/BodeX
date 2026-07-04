@@ -145,32 +145,44 @@ struct Question {
 };
 
 struct Cell {
-    bool        fullTick    = false; // green tick -> full question points
-    double      awarded     = 0.0;   // manually entered points
-    int         subAnswered = 0;     // X in X/Y  (REFERENCE ONLY - not scored)
-    std::string lastPage;            // resume marker (stored as text; edited as int)
-    std::string note;
-    bool        touched     = false; // distinguishes blank from an explicit 0
+    bool              fullTick    = false; // green tick -> full question points
+    double            awarded     = 0.0;   // manually entered points
+    int               subAnswered = 0;     // answered count (defaults to subCount)
+    std::vector<char> subChecks;           // Custom split: per-sub answered flags (1=answered)
+    std::string       lastPage;            // resume marker (stored as text; edited as int)
+    std::string       note;
+    bool              touched     = false; // distinguishes blank from an explicit 0
 };
 
 struct Student { int id; bool noSubmission; std::vector<Cell> cells; };
 
 struct Project {
-    int schemaVersion = 1;
+    int schemaVersion = 2;
     std::string name, createdIso;
     std::vector<Question> questions;
     std::vector<Student>  students; // size N; each student's cells size == questions size
 };
 ```
 
+**Sub-questions default to all-answered** and *skipped* ones lock out their points
+(they cap the score — see §6). `subAnswered` is the answered count and drives the
+deduction for an **Equal** split; `subChecks` (a per-sub-question answered mask)
+drives it for a **Custom** split and is empty for Equal.
+
 Helpers (inline in the header — keep them header-only so the non-GUI test build
 doesn't need extra .cpp linkage):
 - `equalShare(q)` = points per sub-question under an equal split.
 - `normalizeQuestion(q)` — clamp subCount ≥ 1; size `subPoints` (Equal re-derives
   all shares; Custom preserves values, pads/truncates to subCount).
+- `blankCell(q)` — a fresh cell defaulting to **all sub-questions answered**
+  (`subAnswered = subCount`; Custom `subChecks` all-1). Use it (not `Cell{}`) when
+  creating/clearing cells so grading starts from full marks.
+- `lockedSubPoints(q, c)` — points locked out by skipped sub-questions (Equal:
+  `skipped * equalShare`; Custom: sum of the skipped `subPoints`).
 - `ensureShape(p)` — make the grid rectangular: normalize questions, assign IDs
-  `1..N`, resize each row's cells to `questions.size()`. Called after every load.
-- `makeProject(name, N, questions)` — build a blank N×M project.
+  `1..N`, resize rows, and keep each cell's `subAnswered`/`subChecks` consistent
+  with its question. Called after every load.
+- `makeProject(name, N, questions)` — build an N×M project of `blankCell`s.
 
 ---
 
@@ -179,19 +191,28 @@ doesn't need extra .cpp linkage):
 Per-cell effective points, **highest precedence first**:
 1. `student.noSubmission` → the whole row scores **0**.
 2. `cell.fullTick` → the cell scores the question's **full `maxPoints`**.
-3. otherwise → `clampCell(awarded, maxPoints)` = clamp to `[0, maxPoints]`.
+3. otherwise → `clampCell(awarded, effectiveMax(q, c))` = clamp to `[0, effectiveMax]`.
 
+- `effectiveMax(q, c)` = `maxPoints − lockedSubPoints(q, c)`: **skipped sub-questions
+  lock out their points**, lowering the awardable ceiling. Equal split: each skip =
+  `maxPoints/subCount`; Custom: the specific skipped `subPoints`.
 - `studentTotal(p, s)` = 0 if no-submission, else sum of `cellPoints` over questions.
-- `projectMaxTotal(p)` = sum of `q.maxPoints` (the "/ max" denominator).
-- `cellOverMax(q, c)` = grader typed more than the question is worth (visual
-  orange warning only; storage is never silently capped).
+- `projectMaxTotal(p)` = sum of `q.maxPoints` (the "/ max" denominator — the *full*
+  max; locked points don't shrink it).
+- `cellOverMax(q, c)` = grader typed more than the **effectiveMax** (visual orange
+  warning only; storage is never silently capped).
+- `setAnsweredCount` / `setSubAnswered` (Scoring.*) are the editor helpers that
+  lock/unlock sub-questions: locking deducts the sub-question's points from
+  `awarded` (so 8/10 → 5.5/7.5 when one of four equal sub-qs is skipped), unlocking
+  adds them back, then clamps `awarded` into `[0, effectiveMax]`. GUI-free/tested.
 - `classStats(p)` = students / graded (no-submission or any touched-or-full cell) /
   average / min / max.
 
 **Invariants to respect when editing:**
-- `X/Y` (`subAnswered`) is **display/reference only** — it never affects the score.
-  (If a future spec wants auto-scoring from the fraction, it's a localized change
-  in `cellPoints`.)
+- **Sub-questions default to all-answered** (`blankCell`), and skipped ones now
+  **cap the score** via `effectiveMax` — `subAnswered`/`subChecks` are *no longer*
+  reference-only (they were pre-v2). `projectMaxTotal` stays the full max; the cell
+  still displays `awarded` out of the question's full points externally.
 - **Toggling / painting full marks must NOT set `cell.touched`.** A full cell
   counts as graded via `fullTick` regardless of `touched`; leaving `touched`
   alone means un-fulling a previously-blank cell returns it to blank `-` instead
@@ -208,8 +229,11 @@ Per-cell effective points, **highest precedence first**:
   `loadProject` do UTF-8 file I/O via `_wfopen` on the wide path (so Unicode paths
   work — libstdc++ fstream doesn't take wide paths on MinGW). `loadProject` runs
   `ensureShape` on the result.
-- **`schemaVersion`** is stored. It is `1`. If you make a breaking model change,
-  bump it and handle older versions on load.
+- **`schemaVersion`** is stored. It is **`2`**. `projectFromJsonString` migrates
+  `< 2` files: because v1 treated `X/Y` as reference-only, it resets every cell to
+  all-answered (`subAnswered = subCount`, `subChecks` cleared) so no old grade is
+  retro-deducted — **scores are preserved**, the stale reference counts are dropped.
+  Bump `schemaVersion` and add a migration branch here for any future breaking change.
 - Config: `%APPDATA%\BodeX\config.json` holds the recent-projects list;
   `%APPDATA%\BodeX\projects\` is the suggested (not enforced) save dir.
   `AppConfig` resolves these via `SHGetFolderPathW(CSIDL_APPDATA)` and creates
@@ -231,13 +255,23 @@ guard also covers the X button.
 
 `App` is a simple screen state machine: `Screen { Home, NewProject, Grading }`.
 `render()` handles global shortcuts (Ctrl+S/N/O), draws the main menu bar, then
-the current screen, then the unsaved-changes modal.
+the current screen, then the unsaved-changes modal. It also **toggles
+`ImGuiConfigFlags_NavEnableKeyboard`** per frame: OFF on the bare grading grid (so
+its keyboard-first grading owns the arrows/Tab — see §9), ON for popups and the
+Home/NewProject screens.
 
 Actions: `newProjectStart`, `createProjectFromDraft`, `openProjectDialog`,
 `openProjectPath`, `doSave` (falls back to `doSaveAs` when no path), `doSaveAs`,
 `closeProject`, `requestQuit`. The **unsaved-changes guard** (`guard(Pending, …)`
 → `renderUnsavedPrompt` → `performPending`) offers Save / Discard / Cancel before
-any action that would lose work.
+any action that would lose work. `guard` only records the pending action and sets
+`openGuardPopup_`; the actual `ImGui::OpenPopup` fires inside `renderUnsavedPrompt`,
+**not** at the call site. This matters: a `guard` invoked from a File-menu item
+runs under the menu's ID stack, and an `OpenPopup` there would hash to a different
+id than the root-level `BeginPopupModal` and the modal would silently never appear
+(so File → New/Open/Close/Exit would no-op when dirty). Deferring the open to the
+same call as the modal keeps the ids matched for every caller (menu, Ctrl+N/O, and
+the `WM_CLOSE` X button).
 
 `NewProjectDraft` holds the New Project screen's editable state; `syncQuestions()`
 keeps its `questions` vector sized to `questionCount` each frame.
@@ -254,13 +288,22 @@ after their trigger.
 In `GradingTable.cpp`:
 - **Right-click a cell** = toggle full marks. **Right-click + drag** = "paint" full
   marks across a **row or column** (axis locked from the initial drag direction).
-- **Left-click a cell** = open the detailed cell editor.
+- **Left-click a cell** = open the detailed cell editor (also moves the keyboard
+  selection there).
 - **Click a student ID** = student menu (No submission toggle).
+- **Keyboard-first grading** (`handleGridKeyboard`): a selected "active" cell
+  (`App::activeRow/activeCol`, blue outline) driven from the keyboard — **arrows**
+  move it; **digits/`.`/`-`** begin an inline awarded-points edit; **Enter**/**Tab**
+  commit and advance (down / right; Shift+Tab left); **Esc** cancels; **`f`**/**`n`**
+  toggle full-marks / the row's no-submission; **Del**/**Backspace** clear the cell;
+  **F2** opens the full editor. Mechanics detailed below.
 
   (L/R were swapped deliberately: the left-click editor uses `IsItemClicked`, which
-  is occlusion-aware, so it won't fire for cells hidden under the floating image
-  preview; the paint gesture below is raw-mouse + rect hit-test and is NOT
-  occlusion-aware — see NOTES.md "preview click-through" for the proper fix.)
+  is occlusion-aware, so it won't fire for cells hidden under a floating image
+  preview. The paint gesture below is raw-mouse + rect hit-test and is NOT itself
+  occlusion-aware, so it is now **gated** on the grading window being hovered — see
+  the note in `handlePaintGesture` below. The L/R swap is kept regardless, per the
+  author's preference.)
 
 The paint gesture is resolved centrally in `handlePaintGesture(app)` **after** the
 table is drawn, using **recorded cell rectangles** (`g_cellRects`), NOT
@@ -273,6 +316,9 @@ cells from the anchor to the hovered cell along the locked axis, only ever
 **setting** `fullTick = true` (never unsetting mid-drag), and skips no-submission
 students. Gesture state lives on `App` (`paintActive`, `paintIsDrag`,
 `paintAnchorRow/Col`, `paintAxis`). A plain click (no drag) toggles the anchor.
+`handlePaintGesture` early-outs when a popup is open **or** when the mouse is not
+over the grading window (`IsWindowHovered(ImGuiHoveredFlags_ChildWindows | …)`),
+so dragging a floating preview across the grid never paints the occluded cells.
 
 Cell rendering: each grade cell is a two-line `Button` (`##cell_i_j` id) sized to
 two text lines. Line 1 = score + `X/Y` (or `FULL <pts>  Y/Y` for a full tick);
@@ -282,6 +328,36 @@ disabled. The table uses `ScrollX|ScrollY|Resizable|SizingFixedFit`, frozen head
 row + ID column (`TableSetupScrollFreeze(1,1)`), and an `ImGuiListClipper` for
 rows.
 
+**Keyboard-first grading (the non-obvious parts).** `handleGridKeyboard(app)` runs
+near the top of `gradingScreen`, **before** `BeginTable`, so the selection / scroll
+/ inline-edit take effect the same frame.
+
+- **ImGui nav is turned OFF on the bare grading grid** (`App::render`, see §8): the
+  grid is a table of `Button` widgets, so ImGui's built-in keyboard nav would
+  otherwise fight the custom arrows/Tab (steal Tab, draw a focus rect, move focus).
+  It's re-enabled when a popup is open or on the Home/NewProject screens.
+- **Ownership gate:** `handleGridKeyboard` early-returns if a popup is open **or**
+  `App::anyPreviewFocused` is set (a focused image-preview window handles its own
+  keys — that flag is reset/set in `imagePreviewWindows`, `QuestionImages.cpp`).
+  When the app isn't the OS-foreground window it gets no key events at all, so
+  nothing fires regardless — no `IsWindowFocused` check is needed (and it would be
+  wrong: the background grid window isn't ImGui-focused until you click it).
+- **Force-render the active row:** `clipper.IncludeItemByIndex(activeRow)` submits
+  it even when scrolled off, so it can be outlined and scrolled to. `gridScrollToActive`
+  triggers `SetScrollHereY`/`SetScrollHereX(0.5)` on the active cell (vertical is
+  reliable; horizontal is best-effort — a fully clipped column registers no item rect).
+- **Inline edit (`renderInlineEdit`)** replaces the active cell's button with an
+  `InputText(CharsDecimal|EnterReturnsTrue|CallbackAlways)` seeded with the typed
+  digit. Gotcha handled: `SetKeyboardFocusHere` **selects-all** the seed, so the
+  next keystroke would replace the first digit ("7.5" → ".5"). `inlineEditCallback`
+  collapses that initial selection **once** (guarded by `gridEditDeselect`, detected
+  via a live `SelectionStart != SelectionEnd`), so later digits append. Commit does
+  `awarded = strtod(buf)`, `fullTick = false`, `touched = true`; **Esc** discards.
+- Toggling full marks via **`f`** leaves `touched` alone (the §6 invariant), same as
+  the mouse paint. Active-cell state lives on `App` (`activeRow/Col`, `gridEditing`,
+  `gridEditBuf`, `gridEditFocus`, `gridEditDeselect`, `gridScrollToActive`) and is
+  reset in `applyLoadedProject`/`closeProject` (indices point into the old grid).
+
 ---
 
 ## 9b. Question images (screenshots / solution references)
@@ -290,7 +366,28 @@ Per-question attachments, column-level (shared across students). Model:
 `QuestionImage { file, role (Question|Solution), caption, subQuestions[] }` on
 `Question::images` (`model/Project.h`); `Project::id` names the pre-save staging
 dir. Accessed from the **column header** (click → `questionImagesPopup`), previewed
-in a **non-modal window** (`imagePreviewWindow`) that can stay open beside the grid.
+in **non-modal windows** (`imagePreviewWindows`) that stay open beside the grid.
+
+- **Previews (`imagePreviewWindows`, `ui/QuestionImages.cpp`):** the "Preview"
+  button in the popup opens (or raises) a floating window via `openPreview`; the
+  window state is a `PreviewWin { id, question, image, zoom, fit, focusNext, open }`
+  entry in `App::previews` (a vector — several can be open at once, e.g. a question
+  beside its solution). Each window's title uses a stable `###bodex_img_preview_<id>`
+  so its visible label (`i/N`, role) can change without ImGui re-creating it.
+  `imagePreviewWindows` draws every open entry and prunes closed ones after the loop.
+  In-window controls, so you never round-trip through the popup to change image:
+  **mouse wheel flips** through *all* of that question's images (Question +
+  Solution, wrap-around; `< Prev`/`Next >` buttons and Left/Right arrows do the
+  same); **Ctrl+wheel, `+`/`-` buttons/keys** zoom (turns `fit` off); **left-drag
+  pans** the zoomed image (via `SetScrollX/Y`); **`F`** toggles fit, **`Esc`**
+  closes the focused window. Interaction is gated on the hovered/focused window so
+  only one preview reacts. `App::previews` is cleared on `closeProject` **and**
+  `applyLoadedProject` (its indices point into `project.questions`).
+  `imagePreviewWindows` early-returns while `IsPopupOpen("Unsaved Changes")`, so no
+  preview is drawn over the unsaved-changes modal — a focused floating window would
+  otherwise render above it and swallow its Save/Discard/Cancel clicks, making the
+  app impossible to close (the X button, Ctrl+N/O and File → Exit all route through
+  that modal). Previews stay in `App::previews` and reappear once it closes.
 
 - **Storage (copy-beside-project):** files live in `<project>.assets/` next to the
   `.json`; before first save they stage in `%APPDATA%\BodeX\staging\<id>\`.
@@ -345,8 +442,10 @@ in a **non-modal window** (`imagePreviewWindow`) that can stay open beside the g
 - **Add a per-question config field:** add to `Question` → `questionToJson`/
   `questionFromJson` → `NewProjectScreen.cpp` config row → `normalizeQuestion` if
   it needs derived state → tests.
-- **Change scoring:** edit `cellPoints`/`studentTotal` in `Scoring.cpp` and update
-  `tests/test_core.cpp`. Remember the precedence order and the `X/Y` invariant.
+- **Change scoring:** edit `cellPoints`/`studentTotal`/`effectiveMax` in
+  `Scoring.cpp` and update `tests/test_core.cpp`. Remember the precedence order
+  (noSubmission > fullTick > `clamp(awarded, effectiveMax)`) and that skipped
+  sub-questions lock out points via `lockedSubPoints`.
 - **Add a screen:** create `ui/<Name>.{h,cpp}` (function taking `App&`, forward-
   declare `class App;`), add a `Screen` enum value, dispatch in `App::render`,
   wire navigation. The Makefile globs `src/ui/*.cpp` automatically.

@@ -6,6 +6,8 @@
 #include "imgui.h"
 #include "imgui_stdlib.h"
 
+#include <cstdio>
+
 namespace gt::ui {
 
 namespace {
@@ -55,39 +57,71 @@ void cellEditorPopup(App& app)
     if (s.noSubmission)
         ImGui::TextColored(kWarn, "Student marked NO SUBMISSION - the whole row scores 0.");
 
-    // Green full-marks tick: overrides awarded points to the question maximum.
+    // Green full-marks tick: full points and, by definition, every sub answered.
     bool tick = c.fullTick;
     if (greenTickCheckbox("Full marks - all sub-questions correct", &tick)) {
         c.fullTick = tick;
+        if (tick) {
+            c.subAnswered = q.subCount;
+            if (q.split == gt::SplitMode::Custom)
+                c.subChecks.assign(static_cast<size_t>(q.subCount), 1);
+        }
         c.touched = true;
         app.markDirty();
     }
 
-    // Manually awarded points (disabled while full-tick is on).
+    // Awardable ceiling after locking out skipped sub-questions (== maxPoints when
+    // all answered). Manually awarded points are capped at it.
+    const double effMax = gt::effectiveMax(q, c);
+
     ImGui::BeginDisabled(c.fullTick);
     double awarded = c.awarded;
     ImGui::SetNextItemWidth(140);
-    if (ImGui::InputDouble("Awarded points", &awarded, 0.5, 1.0, "%.2f")) {
+    char awardedLabel[48];
+    std::snprintf(awardedLabel, sizeof(awardedLabel), "Awarded points (max %s)", fmtNum(effMax).c_str());
+    if (ImGui::InputDouble(awardedLabel, &awarded, 0.5, 1.0, "%.2f")) {
+        if (awarded < 0.0)    awarded = 0.0;
+        if (awarded > effMax) awarded = effMax;
         c.awarded = awarded;
         c.touched = true;
         app.markDirty();
     }
     ImGui::EndDisabled();
     if (gt::cellOverMax(q, c))
-        ImGui::TextColored(kWarn, "awarded exceeds the max of %s", fmtNum(q.maxPoints).c_str());
+        ImGui::TextColored(kWarn, "awarded exceeds the awardable max of %s", fmtNum(effMax).c_str());
 
-    // Sub-questions answered (X of Y) - reference only, does not affect score.
-    int answered = c.subAnswered;
-    ImGui::SetNextItemWidth(140);
-    if (ImGui::InputInt("Sub-questions answered", &answered)) {
-        if (answered < 0)          answered = 0;
-        if (answered > q.subCount) answered = q.subCount;
-        c.subAnswered = answered;
-        c.touched = true;
-        app.markDirty();
+    // Sub-questions answered. Skipping one locks out its points: the value is
+    // deducted from `awarded` and from the awardable ceiling. Equal split edits a
+    // count; Custom ticks each sub-question so it deducts its own point value.
+    if (q.split == gt::SplitMode::Custom) {
+        ImGui::TextUnformatted("Sub-questions answered (untick a skipped one):");
+        if (static_cast<int>(c.subChecks.size()) != q.subCount)
+            c.subChecks.assign(static_cast<size_t>(q.subCount), 1);
+        for (int k = 0; k < q.subCount; ++k) {
+            ImGui::PushID(k);
+            bool ans = c.subChecks[static_cast<size_t>(k)] != 0;
+            const double kpts = k < static_cast<int>(q.subPoints.size())
+                                ? q.subPoints[static_cast<size_t>(k)] : 0.0;
+            char lbl[32];
+            std::snprintf(lbl, sizeof(lbl), "%d (%s)", k + 1, fmtNum(kpts).c_str());
+            if (ImGui::Checkbox(lbl, &ans)) {
+                gt::setSubAnswered(q, c, k, ans); // deduct/add this sub-q's points
+                app.markDirty();
+            }
+            ImGui::PopID();
+            if ((k % 6) != 5 && k != q.subCount - 1)
+                ImGui::SameLine();
+        }
+    } else {
+        int answered = c.subAnswered;
+        ImGui::SetNextItemWidth(140);
+        if (ImGui::InputInt("Sub-questions answered", &answered)) {
+            gt::setAnsweredCount(q, c, answered); // deducts skipped shares from awarded
+            app.markDirty();
+        }
+        ImGui::SameLine();
+        ImGui::Text("/ %d", q.subCount);
     }
-    ImGui::SameLine();
-    ImGui::Text("/ %d", q.subCount);
 
     // Resume marker: page number with -/+ steppers (type or step; 0 clears it).
     int lp = lastPageToInt(c.lastPage);
@@ -102,11 +136,15 @@ void cellEditorPopup(App& app)
 
     ImGui::Separator();
     ImGui::Text("Cell score: %s / %s",
-                fmtNum(gt::cellPoints(s, q, c)).c_str(), fmtNum(q.maxPoints).c_str());
+                fmtNum(gt::cellPoints(s, q, c)).c_str(), fmtNum(gt::effectiveMax(q, c)).c_str());
+    const double locked = gt::lockedSubPoints(q, c);
+    if (locked > 1e-9)
+        ImGui::TextDisabled("locked out %s of %s (skipped sub-questions)",
+                            fmtNum(locked).c_str(), fmtNum(q.maxPoints).c_str());
     ImGui::Separator();
 
     if (ImGui::Button("Clear cell")) {
-        c = gt::Cell{};
+        c = gt::blankCell(q);   // back to all-answered, not a raw zeroed cell
         app.markDirty();
     }
     ImGui::SameLine();

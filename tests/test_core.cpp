@@ -47,7 +47,8 @@ static Project buildSample()
     imgS.subQuestions = {0, 1, 9};
     p.questions[1].images = {imgQ, imgS};
 
-    // Student 1: manual 12/20 on Q1 (3/5 answered), green tick on Q2 -> 22.
+    // Student 1: Q1 awarded 12 with 3/5 answered (2 skipped -> 8 locked, effMax 12,
+    // so 12 caps to 12); green tick on Q2 -> 10. Total 22.
     p.students[0].cells[0].awarded = 12.0;
     p.students[0].cells[0].subAnswered = 3;
     p.students[0].cells[0].touched = true;
@@ -225,6 +226,125 @@ static void testRecentAliasSafe()
     CHECK(cfg.recentProjects[0] == "d.json");
 }
 
+// Skipped sub-questions lock out their points: they cap awarded and lower the
+// awardable max. Equal split uses the answered count; Custom uses per-sub ticks.
+static void testSubQuestionDeduction()
+{
+    Question qe; qe.title = "Qe"; qe.maxPoints = 10.0; qe.subCount = 4; qe.split = SplitMode::Equal;
+    Question qc; qc.title = "Qc"; qc.maxPoints = 10.0; qc.subCount = 3; qc.split = SplitMode::Custom;
+    qc.subPoints = {7.0, 2.0, 1.0};
+    Project p = makeProject("Deduction", 1, {qe, qc});
+    Student& s = p.students[0];
+
+    // New cells default to all-answered => no deduction, full effMax.
+    CHECK(s.cells[0].subAnswered == 4);
+    CHECK_NEAR(effectiveMax(p.questions[0], s.cells[0]), 10.0);
+    CHECK(s.cells[1].subAnswered == 3);
+    CHECK(s.cells[1].subChecks.size() == 3);
+    CHECK_NEAR(effectiveMax(p.questions[1], s.cells[1]), 10.0);
+
+    // Equal: skip 1 of 4 -> lock 2.5 -> effMax 7.5. awarded 8 caps to 7.5.
+    s.cells[0].subAnswered = 3; s.cells[0].awarded = 8.0; s.cells[0].touched = true;
+    CHECK_NEAR(lockedSubPoints(p.questions[0], s.cells[0]), 2.5);
+    CHECK_NEAR(effectiveMax(p.questions[0], s.cells[0]), 7.5);
+    CHECK_NEAR(cellPoints(s, p.questions[0], s.cells[0]), 7.5);
+    CHECK(cellOverMax(p.questions[0], s.cells[0]));          // 8 > 7.5
+
+    // The editor's "8 -> 5.5" result passes straight through (within the ceiling).
+    s.cells[0].awarded = 5.5;
+    CHECK_NEAR(cellPoints(s, p.questions[0], s.cells[0]), 5.5);
+    CHECK(!cellOverMax(p.questions[0], s.cells[0]));
+
+    // Custom: skip the 2-pt sub-question specifically -> lock exactly 2 -> effMax 8.
+    s.cells[1].subChecks = {1, 0, 1}; s.cells[1].awarded = 8.0; s.cells[1].touched = true;
+    CHECK_NEAR(lockedSubPoints(p.questions[1], s.cells[1]), 2.0);
+    CHECK_NEAR(effectiveMax(p.questions[1], s.cells[1]), 8.0);
+    CHECK_NEAR(cellPoints(s, p.questions[1], s.cells[1]), 8.0);
+
+    // Skip the 7-pt one instead -> lock 7 -> effMax 3, so awarded 8 caps to 3.
+    s.cells[1].subChecks = {0, 1, 1};
+    CHECK_NEAR(lockedSubPoints(p.questions[1], s.cells[1]), 7.0);
+    CHECK_NEAR(cellPoints(s, p.questions[1], s.cells[1]), 3.0);
+}
+
+// The editor helpers: locking a sub-question deducts its points from awarded (the
+// user's "8 -> 5.5" example) and unlocking adds them back, clamped to the ceiling.
+static void testEditorAdjust()
+{
+    Question qe; qe.title = "Qe"; qe.maxPoints = 10.0; qe.subCount = 4; qe.split = SplitMode::Equal;
+    Question qc; qc.title = "Qc"; qc.maxPoints = 10.0; qc.subCount = 3; qc.split = SplitMode::Custom;
+    qc.subPoints = {7.0, 2.0, 1.0};
+    Project p = makeProject("Adjust", 1, {qe, qc});
+    Cell& ce = p.students[0].cells[0];
+    Cell& cc = p.students[0].cells[1];
+
+    // Equal: graded 8 with all 4 answered; skip one -> 8 - 2.5 = 5.5, ceiling 7.5.
+    ce.awarded = 8.0; ce.subAnswered = 4;
+    setAnsweredCount(qe, ce, 3);
+    CHECK_NEAR(ce.awarded, 5.5);
+    CHECK_NEAR(effectiveMax(qe, ce), 7.5);
+    CHECK(ce.subAnswered == 3);
+    CHECK(!ce.fullTick);
+    CHECK(ce.touched);
+    // Re-answer it -> 5.5 + 2.5 = 8 again.
+    setAnsweredCount(qe, ce, 4);
+    CHECK_NEAR(ce.awarded, 8.0);
+    CHECK_NEAR(effectiveMax(qe, ce), 10.0);
+
+    // Custom: graded 10; skip the 2-pt sub-q -> 8 (ceiling 8).
+    cc.awarded = 10.0; cc.subChecks = {1, 1, 1}; cc.subAnswered = 3;
+    setSubAnswered(qc, cc, 1, false);
+    CHECK_NEAR(cc.awarded, 8.0);
+    CHECK_NEAR(effectiveMax(qc, cc), 8.0);
+    CHECK(cc.subAnswered == 2);
+    // Also skip the 7-pt one -> 8 - 7 = 1 (ceiling 1).
+    setSubAnswered(qc, cc, 0, false);
+    CHECK_NEAR(cc.awarded, 1.0);
+    CHECK_NEAR(effectiveMax(qc, cc), 1.0);
+    // Toggling the same box again is idempotent (no double-deduct).
+    setSubAnswered(qc, cc, 0, false);
+    CHECK_NEAR(cc.awarded, 1.0);
+    // Re-answer the 2-pt one -> 1 + 2 = 3 (ceiling 3).
+    setSubAnswered(qc, cc, 1, true);
+    CHECK_NEAR(cc.awarded, 3.0);
+    CHECK_NEAR(effectiveMax(qc, cc), 3.0);
+}
+
+// subChecks survive a round-trip; a pre-v2 file loads as all-answered so its old
+// (reference-only X/Y) scores are preserved rather than retro-deducted.
+static void testSubChecksAndMigration()
+{
+    Question qc; qc.title = "Qc"; qc.maxPoints = 10.0; qc.subCount = 3; qc.split = SplitMode::Custom;
+    qc.subPoints = {7.0, 2.0, 1.0};
+    Project p = makeProject("RT", 1, {qc});
+    p.students[0].cells[0].subChecks = {0, 1, 1};   // skip the 7-pt part
+    p.students[0].cells[0].subAnswered = 2;
+    p.students[0].cells[0].awarded = 3.0;
+    p.students[0].cells[0].touched = true;
+
+    Project p2; std::string err;
+    CHECK(projectFromJsonString(toJsonString(p), p2, &err));
+    CHECK(p2.students[0].cells[0].subChecks.size() == 3);
+    CHECK(p2.students[0].cells[0].subChecks[0] == 0);
+    CHECK_NEAR(effectiveMax(p2.questions[0], p2.students[0].cells[0]), 3.0);
+    CHECK_NEAR(studentTotal(p2, 0), 3.0);
+
+    // A v1 file with subAnswered=2 must load as all-answered (score preserved).
+    const std::string v1 =
+        "{\"schemaVersion\":1,\"name\":\"old\",\"questions\":["
+        "{\"title\":\"Q1\",\"maxPoints\":20,\"subCount\":5,\"split\":\"equal\","
+        "\"subPoints\":[4,4,4,4,4]}],"
+        "\"students\":[{\"id\":1,\"noSubmission\":false,\"cells\":["
+        "{\"fullTick\":false,\"awarded\":12,\"subAnswered\":2,\"lastPage\":\"\","
+        "\"note\":\"\",\"touched\":true}]}]}";
+    Project pv; std::string err2;
+    CHECK(projectFromJsonString(v1, pv, &err2));
+    CHECK(pv.schemaVersion == 2);                    // upgraded in memory
+    CHECK(pv.students[0].cells[0].subAnswered == 5); // reset to all-answered
+    CHECK_NEAR(effectiveMax(pv.questions[0], pv.students[0].cells[0]), 20.0);
+    CHECK_NEAR(cellPoints(pv.students[0], pv.questions[0], pv.students[0].cells[0]), 12.0);
+}
+
 int main()
 {
     testScoring();
@@ -233,6 +353,9 @@ int main()
     testImagesRoundTrip();
     testMalformedJson();
     testRecentAliasSafe();
+    testSubQuestionDeduction();
+    testEditorAdjust();
+    testSubChecksAndMigration();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     if (g_failures == 0)

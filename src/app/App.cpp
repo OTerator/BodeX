@@ -65,12 +65,16 @@ static gt::Project buildDemoProject()
     gt::Project p = gt::makeProject("Demo Exercise", 8, {q1, q2, q3});
     p.createdIso = gt::nowIso();
 
+    // Equal-split deduction: Q1 has 5 sub-qs (4 pts each); 2 skipped -> 8 locked out.
     p.students[0].cells[0].awarded = 12; p.students[0].cells[0].subAnswered = 3;
     p.students[0].cells[0].touched = true; p.students[0].cells[0].lastPage = "14";
     p.students[0].cells[0].note = "recheck part b";
     p.students[0].cells[1].fullTick = true; p.students[0].cells[1].touched = true;
     p.students[1].noSubmission = true;
     p.students[2].cells[0].awarded = 25; p.students[2].cells[0].touched = true; // over max
+    // Custom-split deduction: Q2 sub-points {7,3}; student 4 skipped the 3-pt part.
+    p.students[3].cells[1].subChecks = {1, 0}; p.students[3].cells[1].subAnswered = 1;
+    p.students[3].cells[1].awarded = 7; p.students[3].cells[1].touched = true;
     return p;
 }
 
@@ -115,6 +119,19 @@ void App::render()
         guard(Pending::NewProject);
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O))
         guard(Pending::OpenDialog);
+
+    // The bare grading grid drives its own keyboard (arrows/Tab/type-to-edit), so
+    // turn ImGui's built-in keyboard nav OFF there or it would fight us (steal Tab,
+    // draw a focus rect, move focus). Keep it ON for popups and other screens.
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        const bool anyPopup = ImGui::IsPopupOpen(nullptr,
+            ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        if (screen == Screen::Grading && !anyPopup)
+            io.ConfigFlags &= ~ImGuiConfigFlags_NavEnableKeyboard;
+        else
+            io.ConfigFlags |=  ImGuiConfigFlags_NavEnableKeyboard;
+    }
 
     renderMenuBar();
 
@@ -165,7 +182,7 @@ void App::guard(Pending next, const std::string& openPath)
     pending_ = next;
     pendingOpenPath_ = openPath;
     if (dirty && hasProject)
-        ImGui::OpenPopup("Unsaved Changes");
+        openGuardPopup_ = true;   // deferred; opened in renderUnsavedPrompt (root id stack)
     else
         performPending();
 }
@@ -186,6 +203,14 @@ void App::performPending()
 
 void App::renderUnsavedPrompt()
 {
+    // Open here (not in guard) so OpenPopup and BeginPopupModal share this call's
+    // id stack; a guard() from a File-menu item runs under the menu's id stack and
+    // its OpenPopup would never match this modal.
+    if (openGuardPopup_) {
+        ImGui::OpenPopup("Unsaved Changes");
+        openGuardPopup_ = false;
+    }
+
     const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
@@ -259,6 +284,9 @@ bool App::openProjectPath(const std::string& path)
 void App::applyLoadedProject(gt::Project&& p, const std::string& path)
 {
     gt::ui::imageStoreReleaseAll(); // drop any previous project's textures
+    previews.clear();               // stale windows would index into the old project
+    activeRow = activeCol = 0;      // selection indexes into the new grid
+    gridEditing = false;            // drop any half-finished inline edit
     project = std::move(p);
     hasProject = true;
     projectPath = path;
@@ -325,9 +353,11 @@ void App::closeProject()
     assetsDir.clear();
     dirty = false;
     editorStudent = editorQuestion = menuStudent = -1;
-    imageMenuQuestion = previewQuestion = previewImage = -1;
-    previewOpen = false;
+    imageMenuQuestion = -1;
+    previews.clear();
     addImagePendingFile.clear();
+    activeRow = activeCol = 0;
+    gridEditing = false;
     screen = Screen::Home;
     statusMsg = "Project closed.";
 }

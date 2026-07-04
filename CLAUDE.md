@@ -23,7 +23,7 @@ change alters behavior, structure, invariants, build, or workflow, update
 | You changed… | Also update… |
 |---|---|
 | Data model (`Cell`/`Question`/`Student`/`Project` in `model/Project.h`) | `Serialization.cpp` (`*ToJson`/`*FromJson`), the cell/question editors (`CellEditor.cpp`, `NewProjectScreen.cpp`), the grid display (`cellSummary` in `GradingTable.cpp`), `tests/test_core.cpp`, spec.md §5/§11. **Bump `schemaVersion` if the change is breaking** and handle old files in `projectFromJsonString`. |
-| Scoring rules (`Scoring.cpp`) | `tests/test_core.cpp`, spec.md §6. Respect precedence: `noSubmission` > `fullTick` > `clamp(awarded)`; `X/Y` stays reference-only. |
+| Scoring rules (`Scoring.cpp`) | `tests/test_core.cpp`, spec.md §6. Respect precedence: `noSubmission` > `fullTick` > `clamp(awarded, effectiveMax)`; skipped sub-questions lock out points (`lockedSubPoints`). |
 | A UI interaction or screen | `README.md` "Using it", `docs/screenshot.png` if it changed visibly, spec.md §8/§9. |
 | Build includes/flags (`Makefile`) | `compile_flags.txt` (keep the two in sync so clangd resolves headers), spec.md §3. |
 | Added/removed a third-party lib | `Makefile` `INCLUDES` + source lists, `compile_flags.txt`, README "License & credits", commit the vendored files, spec.md §4/§15. |
@@ -51,8 +51,9 @@ editor open), or `=3` (New Project screen). Demo data is in-memory only.
 - **Model layer stays GUI-free** (`src/model/*`, `src/util/utf.h`). Only file/path
   code there touches Win32. Keeps it unit-testable.
 - **Scoring precedence:** `noSubmission` (row → 0) > `fullTick` (→ full points) >
-  `clamp(awarded, 0, max)`. **`X/Y` sub-questions answered is reference-only** and
-  never affects the score.
+  `clamp(awarded, 0, effectiveMax)`. **Skipped sub-questions lock out their points**
+  (`effectiveMax = maxPoints − lockedSubPoints`): Equal deducts `maxPoints/subCount`
+  per skip, Custom the specific `subPoints`. (Pre-v2, `X/Y` was reference-only.)
 - **Toggling/painting full marks must not set `cell.touched`** — a full cell
   counts via `fullTick`; leaving `touched` alone lets un-fulling a blank cell
   return to blank instead of a stray `0`.

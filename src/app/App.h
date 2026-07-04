@@ -29,6 +29,20 @@ struct NewProjectDraft {
 
 } // namespace gt
 
+// One open, non-modal image-preview window. Several can be open at once (e.g. a
+// question screenshot beside its solution). `question`/`image` index into
+// project.questions[q].images[k]; `id` gives the ImGui window a stable "###id"
+// and a focus target. Kept ImGui-free (plain scalars) so App.h stays light.
+struct PreviewWin {
+    int   id        = 0;
+    int   question  = -1;   // index into project.questions
+    int   image     = -1;   // index into question.images
+    float zoom      = 1.0f;
+    bool  fit       = true; // fit-to-window (recomputed each frame) vs manual zoom
+    bool  focusNext = false; // raise/focus this window next frame (open-or-raise)
+    bool  open      = true;  // cleared -> window closed, erased after the draw loop
+};
+
 // App lives in the global namespace to match main.cpp's `App app;`.
 class App {
 public:
@@ -67,17 +81,27 @@ public:
     int  paintAnchorCol = -1;   // question index the gesture started on
     int  paintAxis = 0;         // 0 = undecided, 1 = row, 2 = column
 
+    // Keyboard-first grading: selected ("active") cell + inline numeric quick-entry.
+    int         activeRow = 0;
+    int         activeCol = 0;
+    bool        gridEditing = false;        // inline awarded-points edit in progress
+    std::string gridEditBuf;                // inline edit text buffer
+    bool        gridEditFocus = false;      // SetKeyboardFocusHere on next draw
+    bool        gridEditDeselect = false;   // collapse InputText's auto-select-all once focused
+    bool        gridScrollToActive = false; // scroll active cell into view next draw
+    bool        anyPreviewFocused = false;  // an image-preview window has the keyboard
+                                            // (recomputed each frame; grid keys yield to it)
+
     // Question images: where this project's image files currently live.
     std::string assetsDir;
 
-    // Column-header image menu target + preview window state.
+    // Column-header image menu target.
     int   imageMenuQuestion = -1;
     bool  requestOpenImageMenu = false;
-    bool  previewOpen = false;
-    int   previewQuestion = -1;
-    int   previewImage = -1;
-    float previewZoom = 1.0f;
-    bool  previewFit = true;    // fit-to-window (recomputed each frame) vs manual zoom
+
+    // Open image-preview windows (non-modal; can stay open beside the grid).
+    std::vector<PreviewWin> previews;
+    int                     nextPreviewId = 1; // hands out stable per-window ids
 
     // Transient "Add image" form (inside the image menu popup).
     std::string       addImagePendingFile; // picked source path awaiting confirm
@@ -105,6 +129,10 @@ private:
     void guard(Pending next, const std::string& openPath = "");
     void performPending();
     void renderUnsavedPrompt();
+    // Set by guard() when the prompt is needed; the actual OpenPopup is deferred
+    // to renderUnsavedPrompt so it shares BeginPopupModal's id-stack. Opening it
+    // directly from a menu item (different id stack) would never match the modal.
+    bool openGuardPopup_ = false;
 
     void renderMenuBar();
     void applyLoadedProject(gt::Project&& p, const std::string& path);

@@ -8,7 +8,8 @@ namespace gt::ui {
 // Submitted after the grading table is drawn (opened via app.requestOpenImageMenu).
 void questionImagesPopup(App& app);
 
-// Non-modal image preview window (can stay open beside the grid while grading).
-void imagePreviewWindow(App& app);
+// Non-modal image preview windows (several can stay open beside the grid while
+// grading). Draws every entry in app.previews and prunes the closed ones.
+void imagePreviewWindows(App& app);
 
 } // namespace gt::ui

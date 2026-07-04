@@ -19,8 +19,9 @@ toolchain and needs no external libraries installed.
     split (type each sub-question's value, with a live sum-vs-total check).
 - **Grading grid** — one cell per student × question. Per cell you record:
   - **awarded points** (typed directly),
-  - **sub-questions answered** as `X / Y` (kept for reference; does not change the
-    score),
+  - **sub-questions answered** as `X / Y` — every cell starts assuming *all*
+    answered; mark the skipped ones and their points are **locked out** (deducted
+    from the awarded score and from the awardable max),
   - a **green full-marks tick** — all sub-questions correct ⇒ the cell
     automatically scores the question's full points,
   - a **last page** note (e.g. `p.14`) so you can resume a question-by-question
@@ -31,15 +32,17 @@ toolchain and needs no external libraries installed.
   class summary (graded count, average, min, max) in the toolbar.
 - **Question images** — click a question's column header to attach screenshots:
   the **question sheet** and **solution references** used to verify checks. Tag
-  each image with the sub-question(s) it covers, and preview it in a window you
-  can keep open beside the grid. Images are copied into an assets folder beside
-  the project so they travel with it.
+  each image with the sub-question(s) it covers, and open previews in windows you
+  keep beside the grid — several at once. **Scroll to flip** through a question's
+  images, **Ctrl+scroll / `+` `-`** to zoom, **drag** to pan. Images are copied
+  into an assets folder beside the project so they travel with it.
 - **Saved as JSON** — one `.json` file per project; reopen it any time. Recent
   projects are remembered.
 
 Scoring precedence per cell: *no-submission* (row → 0) → *green tick* (→ full
-points) → *awarded* (clamped to `[0, max]`; values over the max are flagged in
-orange but never silently capped in storage).
+points) → *awarded* (clamped to `[0, effective max]`, where the effective max is
+the question's points minus any locked-out skipped sub-questions; values over it
+are flagged in orange but never silently capped in storage).
 
 ## Requirements
 
@@ -85,16 +88,28 @@ BODEX_DEMO=1 ./build/BodeX.exe
    type. → **Create Project**.
 2. **Right-click a cell** to toggle **full marks** (turns green); **hold and
    right-drag** to paint full marks across a whole **row or column** (direction
-   picked from your drag). **Left-click a cell** to open its editor: awarded
-   points, sub-questions answered (X/Y), last page (a page number with `-`/`+`
-   steppers), and a note. The last page shows as `lp: N` on the cell's second line.
-3. Click a **student ID** to mark *No submission* (row scores 0).
-4. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
+   picked from your drag). **Left-click a cell** to open its editor: awarded points,
+   sub-questions answered, last page (a page number with `-`/`+` steppers), and a
+   note. Sub-questions start all-answered; lower the count (equal split) or untick a
+   part (custom split) and its points are deducted from the score and locked out of
+   the awardable max. The last page shows as `lp: N` on the cell's second line.
+3. **Grade from the keyboard.** The selected cell has a blue outline. **Arrow
+   keys** move the selection; **type a number** to set awarded points inline
+   (**Enter** commits and moves down, **Tab** commits and moves right, **Esc**
+   cancels). **`f`** toggles full marks, **`n`** toggles *No submission* for the
+   row, **Del** clears the cell, and **F2** opens the full cell editor. Clicking a
+   cell also moves the selection there, so mouse and keyboard mix freely.
+4. Click a **student ID** to mark *No submission* (row scores 0).
+5. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
    with unsaved changes prompts to Save / Discard / Cancel.
 
 Click a **question's column header** to open its image menu — add / preview /
 remove the question sheet and solution-reference screenshots, each tagged to the
-sub-questions it covers. Previews open in a separate, resizable window.
+sub-questions it covers. Each **Preview** opens a separate, resizable window, and
+you can keep several open beside the grid while you grade. Inside a preview:
+**mouse wheel** (or `< Prev` / `Next >`, or the arrow keys) flips through all of
+that question's images; **Ctrl+wheel** or the `+` / `-` buttons/keys zoom;
+**left-drag** pans a zoomed image; **`F`** fits, **`Esc`** closes.
 
 Projects and the recent-projects list live under
 `%APPDATA%\BodeX\` by default (you can Save As / Open anywhere). A question's
@@ -102,11 +117,12 @@ images are copied next to its `.json` in a `<project>.assets/` folder.
 
 ## Project file format
 
-A project is a single JSON document — `schemaVersion`, `name`, `createdIso`, the
-`questions` array (title, `maxPoints`, `subCount`, `split`, `subPoints`), and the
-`students` array (`id`, `noSubmission`, and a `cells` array with `fullTick`,
-`awarded`, `subAnswered`, `lastPage`, `note`). It is plain text and easy to
-inspect or diff.
+A project is a single JSON document — `schemaVersion` (currently `2`), `name`,
+`createdIso`, the `questions` array (title, `maxPoints`, `subCount`, `split`,
+`subPoints`), and the `students` array (`id`, `noSubmission`, and a `cells` array
+with `fullTick`, `awarded`, `subAnswered`, `subChecks`, `lastPage`, `note`). It is
+plain text and easy to inspect or diff. Older v1 files open fine (their scores are
+preserved on load).
 
 ## Layout
 

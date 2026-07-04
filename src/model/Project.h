@@ -43,17 +43,21 @@ struct Question {
     std::vector<QuestionImage> images;    // attached screenshots / solution refs
 };
 
-// One graded cell (student × question). Per the chosen scoring model the grader
-// types `awarded` directly; `subAnswered` (the X in "X/Y") is stored for
-// reference only and does not feed the score. `fullTick` (green tick) overrides
-// to the question's full points. `lastPage` is a free-text resume marker.
+// One graded cell (student × question). The grader types `awarded`; sub-questions
+// default to all-answered and *skipped* ones lock out their points (they cap the
+// awardable max — see Scoring `effectiveMax`). `subAnswered` (the X in "X/Y") is
+// the answered count and drives the deduction for an **Equal** split; `subChecks`
+// (per-sub-question answered flags, 1 = answered) drives it for a **Custom** split
+// and is empty otherwise. `fullTick` (green tick) overrides to the question's full
+// points. `lastPage` is a free-text resume marker.
 struct Cell {
-    bool        fullTick = false;
-    double      awarded = 0.0;
-    int         subAnswered = 0;
-    std::string lastPage;
-    std::string note;
-    bool        touched = false; // grader entered something (blank vs explicit 0)
+    bool              fullTick = false;
+    double            awarded = 0.0;
+    int               subAnswered = 0;   // answered count (default set to subCount)
+    std::vector<char> subChecks;         // Custom split only: per-sub answered flags
+    std::string       lastPage;
+    std::string       note;
+    bool              touched = false;   // grader entered something (blank vs explicit 0)
 };
 
 // One student (row). Just an ID plus a per-question cell vector. noSubmission
@@ -65,7 +69,7 @@ struct Student {
 };
 
 struct Project {
-    int                   schemaVersion = 1;
+    int                   schemaVersion = 2;
     std::string           id;         // short random id; names the staging assets dir
     std::string           name;
     std::string           createdIso;
@@ -110,9 +114,40 @@ inline void normalizeQuestion(Question& q) {
     }
 }
 
+// A fresh cell for question q, defaulting to **all sub-questions answered** so
+// grading starts from full marks and subtracts skipped sub-questions. For a Custom
+// split every per-sub-question tick starts answered; Equal uses the count only.
+inline Cell blankCell(const Question& q) {
+    Cell c;
+    c.subAnswered = q.subCount;
+    if (q.split == SplitMode::Custom)
+        c.subChecks.assign(static_cast<size_t>(q.subCount), 1);
+    return c;
+}
+
+// Points locked out by skipped sub-questions (they cap the awardable max). Equal:
+// each skipped sub-question is worth equalShare; Custom: sum the specific skipped
+// subPoints. Header-only so the (GUI-free) helpers and tests can share it.
+inline double lockedSubPoints(const Question& q, const Cell& c) {
+    if (q.subCount <= 0) return 0.0;
+    if (q.split == SplitMode::Custom && static_cast<int>(c.subChecks.size()) == q.subCount) {
+        double locked = 0.0;
+        for (int k = 0; k < q.subCount; ++k)
+            if (!c.subChecks[static_cast<size_t>(k)] &&
+                k < static_cast<int>(q.subPoints.size()))
+                locked += q.subPoints[static_cast<size_t>(k)];
+        return locked;
+    }
+    // Equal split (or a Custom cell without a valid mask): use the answered count.
+    int skipped = q.subCount - c.subAnswered;
+    if (skipped < 0) skipped = 0;
+    return skipped * equalShare(q);
+}
+
 // Guarantee the grid is rectangular and every derived field is consistent:
-// normalize questions, assign student IDs 1..N, and size each row's cells to
-// match the number of questions.
+// normalize questions, assign student IDs 1..N, size each row's cells to match the
+// number of questions, and keep each cell's sub-question fields (subAnswered /
+// subChecks) consistent with its question's split and subCount.
 inline void ensureShape(Project& p) {
     for (auto& q : p.questions)
         normalizeQuestion(q);
@@ -120,8 +155,26 @@ inline void ensureShape(Project& p) {
         Student& s = p.students[i];
         if (s.id == 0)
             s.id = static_cast<int>(i) + 1;
-        if (s.cells.size() != p.questions.size())
+        // Grow/shrink the row to match the questions; new cells default all-answered.
+        while (s.cells.size() < p.questions.size())
+            s.cells.push_back(blankCell(p.questions[s.cells.size()]));
+        if (s.cells.size() > p.questions.size())
             s.cells.resize(p.questions.size());
+        for (size_t j = 0; j < p.questions.size(); ++j) {
+            const Question& q = p.questions[j];
+            Cell& c = s.cells[j];
+            if (c.subAnswered < 0) c.subAnswered = 0;
+            if (c.subAnswered > q.subCount) c.subAnswered = q.subCount;
+            if (q.split == SplitMode::Custom) {
+                if (static_cast<int>(c.subChecks.size()) != q.subCount)
+                    c.subChecks.assign(static_cast<size_t>(q.subCount), 1);
+                int answered = 0;
+                for (char v : c.subChecks) if (v) ++answered;
+                c.subAnswered = answered; // keep the count in sync for display
+            } else {
+                c.subChecks.clear();
+            }
+        }
     }
 }
 
@@ -130,7 +183,7 @@ inline void ensureShape(Project& p) {
 inline Project makeProject(std::string name, int studentCount, std::vector<Question> questions) {
     Project p;
     p.name = std::move(name);
-    p.schemaVersion = 1;
+    p.schemaVersion = 2;
     p.id = newProjectId();
     for (auto& q : questions)
         normalizeQuestion(q);
@@ -139,8 +192,12 @@ inline Project makeProject(std::string name, int studentCount, std::vector<Quest
         studentCount = 0;
     p.students.resize(static_cast<size_t>(studentCount));
     for (int i = 0; i < studentCount; ++i) {
-        p.students[static_cast<size_t>(i)].id = i + 1;
-        p.students[static_cast<size_t>(i)].cells.assign(p.questions.size(), Cell{});
+        Student& s = p.students[static_cast<size_t>(i)];
+        s.id = i + 1;
+        s.cells.clear();
+        s.cells.reserve(p.questions.size());
+        for (const auto& q : p.questions)   // start every cell at all-answered
+            s.cells.push_back(blankCell(q));
     }
     return p;
 }

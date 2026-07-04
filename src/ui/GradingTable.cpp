@@ -6,6 +6,7 @@
 #include "ui/QuestionImages.h"
 #include "model/Scoring.h"
 #include "imgui.h"
+#include "imgui_stdlib.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -93,6 +94,8 @@ void renderGradeCell(App& app, int i, int j)
 
     if (s.noSubmission) ImGui::BeginDisabled();
     ImGui::Button(label.c_str(), ImVec2(-FLT_MIN, cellH));
+    const ImVec2 rmin = ImGui::GetItemRectMin();
+    const ImVec2 rmax = ImGui::GetItemRectMax();
     const bool leftClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
     const bool hovered     = ImGui::IsItemHovered();
     if (s.noSubmission) ImGui::EndDisabled();
@@ -103,8 +106,11 @@ void renderGradeCell(App& app, int i, int j)
     // The left-click editor uses IsItemClicked so it won't fire for cells hidden
     // under the floating image-preview window. (See NOTES.md: preview click-through.)
     if (!s.noSubmission) {
-        g_cellRects.push_back({ ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), i, j });
+        g_cellRects.push_back({ rmin, rmax, i, j });
         if (leftClicked) {
+            app.activeRow = i;         // keep the keyboard selection in sync
+            app.activeCol = j;
+            app.gridEditing = false;
             app.editorStudent = i;
             app.editorQuestion = j;
             app.requestOpenCellEditor = true;
@@ -115,6 +121,85 @@ void renderGradeCell(App& app, int i, int j)
         ImGui::SetTooltip("%s", c.note.c_str());
 
     if (pushed) ImGui::PopStyleColor(pushed);
+
+    // Keyboard-selection highlight + scroll-into-view. Drawn for no-submission
+    // cells too, so the selection stays visible while toggling a whole NS row.
+    if (i == app.activeRow && j == app.activeCol) {
+        ImGui::GetWindowDrawList()->AddRect(rmin, rmax, IM_COL32(90, 160, 255, 255), 0.0f, 0, 2.5f);
+        if (app.gridScrollToActive) {
+            ImGui::SetScrollHereY(0.5f);
+            ImGui::SetScrollHereX(0.5f);
+            app.gridScrollToActive = false;
+        }
+    }
+}
+
+// The inline editor seeds its buffer with the digit that started it, then focuses
+// via SetKeyboardFocusHere -- which selects-all the seed, so the next keystroke
+// would replace it. This callback collapses that initial selection once (detected
+// by a live selection span), so subsequent digits append. Timing-robust: it only
+// fires on the frame the auto-selection is actually present.
+int inlineEditCallback(ImGuiInputTextCallbackData* data)
+{
+    App* app = static_cast<App*>(data->UserData);
+    if (app->gridEditDeselect && data->SelectionStart != data->SelectionEnd) {
+        data->CursorPos = data->SelectionStart = data->SelectionEnd = data->BufTextLen;
+        app->gridEditDeselect = false;
+    }
+    return 0;
+}
+
+// Inline numeric quick-entry drawn in place of the active cell's button while
+// gridEditing is on. Type digits to set awarded points; Enter commits and moves
+// down, Tab commits and moves right, Esc discards. Only used for non-no-submission
+// cells (the caller guarantees this).
+void renderInlineEdit(App& app, int i, int j)
+{
+    gt::Cell&     c = app.project.students[static_cast<size_t>(i)].cells[static_cast<size_t>(j)];
+    gt::Question& q = app.project.questions[static_cast<size_t>(j)];
+    const int N = static_cast<int>(app.project.students.size());
+    const int M = static_cast<int>(app.project.questions.size());
+
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (app.gridEditFocus) {
+        ImGui::SetKeyboardFocusHere();
+        app.gridEditFocus = false;
+    }
+    const bool enter = ImGui::InputText("##inline", &app.gridEditBuf,
+        ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue |
+        ImGuiInputTextFlags_CallbackAlways, inlineEditCallback, &app);
+    const bool tab = ImGui::IsKeyPressed(ImGuiKey_Tab);
+    const bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape);
+
+    // Record the rect (so the paint hit-test still sees a cell here) + highlight.
+    const ImVec2 rmin = ImGui::GetItemRectMin();
+    const ImVec2 rmax = ImGui::GetItemRectMax();
+    g_cellRects.push_back({ rmin, rmax, i, j });
+    ImGui::GetWindowDrawList()->AddRect(rmin, rmax, IM_COL32(90, 160, 255, 255), 0.0f, 0, 2.5f);
+    if (app.gridScrollToActive) {
+        ImGui::SetScrollHereY(0.5f);
+        ImGui::SetScrollHereX(0.5f);
+        app.gridScrollToActive = false;
+    }
+
+    if (esc) {                     // discard: leave the cell as it was
+        app.gridEditing = false;
+        return;
+    }
+    if (enter || tab) {
+        double v = std::strtod(app.gridEditBuf.c_str(), nullptr); // "" -> 0
+        const double em = gt::effectiveMax(q, c);  // can't inline past the locked ceiling
+        if (v < 0.0) v = 0.0;
+        if (v > em)  v = em;
+        c.awarded = v;
+        c.fullTick = false;        // an explicit number governs over a full tick
+        c.touched = true;
+        app.markDirty();
+        app.gridEditing = false;
+        if (tab) { if (app.activeCol < M - 1) ++app.activeCol; }
+        else     { if (app.activeRow < N - 1) ++app.activeRow; }
+        app.gridScrollToActive = true;
+    }
 }
 
 void renderIdCell(App& app, int i)
@@ -175,6 +260,18 @@ void handlePaintGesture(App& app)
         return;
     }
 
+    // Ignore when the mouse is over a floating window (e.g. an image preview) that
+    // occludes the grid. This gesture hit-tests recorded cell rects by position
+    // (g_cellRects) and is otherwise blind to z-order, so without this gate,
+    // dragging a preview across the grid would paint the cells hidden beneath it.
+    // Called while the "Grading" window is current, so this queries it (+ its
+    // table child). See NOTES.md "image-preview click-through".
+    if (!ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+        app.paintActive = false;
+        return;
+    }
+
     gt::Project& p = app.project;
     const int idx = cellUnderMouse();
     const bool over = idx >= 0;
@@ -217,6 +314,100 @@ void handlePaintGesture(App& app)
     }
 }
 
+// Keyboard-first grading. Runs before the table is drawn so the selection, scroll
+// and inline-edit reflect the new state this frame. Clamps the active cell, then
+// (while the grading grid owns the keyboard) applies the keymap shown in the
+// status bar. ImGui's own keyboard nav is disabled on this screen in App::render,
+// so arrows/Tab don't double-drive focus here.
+void handleGridKeyboard(App& app)
+{
+    gt::Project& p = app.project;
+    const int N = static_cast<int>(p.students.size());
+    const int M = static_cast<int>(p.questions.size());
+    if (N == 0 || M == 0)
+        return;
+
+    // Keep the selection in-bounds (defensive; grid shape is otherwise stable).
+    app.activeRow = std::clamp(app.activeRow, 0, N - 1);
+    app.activeCol = std::clamp(app.activeCol, 0, M - 1);
+
+    // Only drive the grid while it owns the keyboard: no popup up, and no floating
+    // image-preview window focused (a focused preview handles its own keys — see
+    // QuestionImages.cpp). When the app isn't the OS-foreground window it receives
+    // no key events at all, so nothing fires regardless.
+    if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+        return;
+    if (app.anyPreviewFocused)
+        return;
+
+    // While inline-editing the keys belong to the InputText (caret + commit/cancel
+    // are handled in renderInlineEdit).
+    if (app.gridEditing)
+        return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    int& r = app.activeRow;
+    int& c = app.activeCol;
+    bool moved = false;
+
+    // ---- navigation (arrows / Tab / Enter) ----
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))     { if (r > 0)     { --r; moved = true; } }
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
+        ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+        ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) { if (r < N - 1) { ++r; moved = true; } }
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))   { if (c > 0)     { --c; moved = true; } }
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow))  { if (c < M - 1) { ++c; moved = true; } }
+    if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
+        if (io.KeyShift) { if (c > 0)     { --c; moved = true; } }
+        else             { if (c < M - 1) { ++c; moved = true; } }
+    }
+
+    gt::Student& s    = p.students[static_cast<size_t>(r)];
+    gt::Cell&    cell = s.cells[static_cast<size_t>(c)];
+
+    // ---- single-key actions (no key-repeat) ----
+    if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) {           // open the full editor
+        app.editorStudent = r;
+        app.editorQuestion = c;
+        app.requestOpenCellEditor = true;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_F, false) && !s.noSubmission) {
+        cell.fullTick = !cell.fullTick;                      // leave `touched` alone (§6)
+        app.markDirty();
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+        s.noSubmission = !s.noSubmission;
+        app.markDirty();
+    }
+    if ((ImGui::IsKeyPressed(ImGuiKey_Delete, false) ||
+         ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) && !s.noSubmission) {
+        cell = gt::blankCell(p.questions[static_cast<size_t>(c)]); // blank, all-answered
+        app.markDirty();
+    }
+
+    // ---- type a digit/./- to begin inline awarded-points entry ----
+    // Seed the buffer with the typed character(s) and consume them from the queue,
+    // so the first digit isn't lost while the InputText is being focused. The
+    // seed's auto-select-all is collapsed by inlineEditCallback so later digits
+    // append rather than replace.
+    if (!s.noSubmission && !io.InputQueueCharacters.empty()) {
+        std::string seed;
+        for (ImWchar ch : io.InputQueueCharacters)
+            if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-')
+                seed.push_back(static_cast<char>(ch));
+        if (!seed.empty()) {
+            app.gridEditBuf = seed;
+            app.gridEditing = true;
+            app.gridEditFocus = true;
+            app.gridEditDeselect = true;
+            io.InputQueueCharacters.resize(0);
+        }
+    }
+
+    if (moved)
+        app.gridScrollToActive = true;
+}
+
 } // namespace
 
 void gradingScreen(App& app)
@@ -246,6 +437,10 @@ void gradingScreen(App& app)
                         st.students, st.graded, fmtNum(st.average).c_str(),
                         fmtNum(st.minScore).c_str(), fmtNum(st.maxScore).c_str(),
                         fmtNum(gt::projectMaxTotal(p)).c_str());
+
+    // Keyboard-first grading: move the selection / begin inline entry / act on the
+    // active cell. Before BeginTable so the changes take effect this frame.
+    handleGridKeyboard(app);
 
     // ---- grid ----
     const int M = static_cast<int>(p.questions.size());
@@ -305,6 +500,10 @@ void gradingScreen(App& app)
 
         ImGuiListClipper clipper;
         clipper.Begin(static_cast<int>(p.students.size()));
+        // Always submit the active row even when scrolled off, so it can be
+        // highlighted and scrolled back into view.
+        if (app.activeRow >= 0 && app.activeRow < static_cast<int>(p.students.size()))
+            clipper.IncludeItemByIndex(app.activeRow);
         while (clipper.Step()) {
             for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
                 gt::Student& s = p.students[static_cast<size_t>(i)];
@@ -317,7 +516,10 @@ void gradingScreen(App& app)
 
                 for (int j = 0; j < M; ++j) {
                     ImGui::TableSetColumnIndex(1 + j);
-                    renderGradeCell(app, i, j);
+                    if (app.gridEditing && i == app.activeRow && j == app.activeCol && !s.noSubmission)
+                        renderInlineEdit(app, i, j);
+                    else
+                        renderGradeCell(app, i, j);
                 }
 
                 ImGui::TableSetColumnIndex(1 + M);
@@ -339,7 +541,7 @@ void gradingScreen(App& app)
 
     // ---- status bar ----
     ImGui::TextDisabled("%s", app.statusMsg.empty()
-        ? "Right-click = full marks; right-drag to paint a row/column.  Left-click = edit.  Click a column header for images.  Ctrl+S saves."
+        ? "Arrows move; type = points; Enter/Tab commit; F2 edit; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+S saves."
         : app.statusMsg.c_str());
 
     // ---- popups (opened here, after the table, using stored targets) ----
@@ -361,8 +563,9 @@ void gradingScreen(App& app)
 
     ImGui::End();
 
-    // Image preview is a separate, non-modal window (can stay open while grading).
-    imagePreviewWindow(app);
+    // Image previews are separate, non-modal windows (several can stay open while
+    // grading; navigate/zoom them without touching the header popup).
+    imagePreviewWindows(app);
 }
 
 } // namespace gt::ui

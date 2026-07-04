@@ -40,10 +40,14 @@ QuestionImage imageFromJson(const json& j)
 
 json cellToJson(const Cell& c)
 {
+    json subChecks = json::array();          // Custom-split per-sub answered flags
+    for (char v : c.subChecks)
+        subChecks.push_back(v ? 1 : 0);
     return json{
         {"fullTick", c.fullTick},
         {"awarded", c.awarded},
         {"subAnswered", c.subAnswered},
+        {"subChecks", std::move(subChecks)},
         {"lastPage", c.lastPage},
         {"note", c.note},
         {"touched", c.touched},
@@ -56,6 +60,9 @@ Cell cellFromJson(const json& j)
     c.fullTick    = j.value("fullTick", false);
     c.awarded     = j.value("awarded", 0.0);
     c.subAnswered = j.value("subAnswered", 0);
+    if (j.contains("subChecks") && j.at("subChecks").is_array())
+        for (const auto& v : j.at("subChecks"))
+            c.subChecks.push_back(v.get<int>() ? 1 : 0);
     c.lastPage    = j.value("lastPage", std::string());
     c.note        = j.value("note", std::string());
     c.touched     = j.value("touched", false);
@@ -188,6 +195,19 @@ bool projectFromJsonString(const std::string& text, Project& out, std::string* e
     if (root.contains("students") && root.at("students").is_array())
         for (const auto& js : root.at("students"))
             p.students.push_back(studentFromJson(js));
+
+    // Migrate pre-v2 files. In v1 the answered count (X/Y) was reference-only and
+    // never affected the score; in v2 skipped sub-questions lock out points. To
+    // preserve every old grade exactly, treat old cells as all-answered (no
+    // deduction) and drop the stale reference count.
+    if (p.schemaVersion < 2) {
+        for (auto& s : p.students)
+            for (size_t j = 0; j < s.cells.size() && j < p.questions.size(); ++j) {
+                s.cells[j].subAnswered = p.questions[j].subCount;
+                s.cells[j].subChecks.clear();
+            }
+        p.schemaVersion = 2; // upgraded in memory; the next save writes v2
+    }
 
     ensureShape(p);
     out = std::move(p);
