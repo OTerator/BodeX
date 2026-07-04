@@ -69,10 +69,10 @@ editor open), or `=3` (New Project screen). Demo data is in-memory only.
 
 ## Definition of done (verify, don't assume)
 
-1. `mingw32-make` builds with no warnings. **If you edited a header, run
-   `mingw32-make clean` first** — the Makefile has no header-dep tracking, so a stale
-   incremental build mixes old/new struct layouts and corrupts memory at runtime
-   (intermittent `0xC0000005`/`0xC0000374`). See spec.md §3.
+1. `mingw32-make` builds with no warnings. Header edits recompile their dependents
+   automatically (`-MMD -MP` dep tracking), so incremental builds are safe — a full
+   `mingw32-make clean` is only needed if you suspect the `.d` files are out of sync.
+   See spec.md §3.
 2. `mingw32-make test` passes; add/adjust cases when you touch model, scoring, or
    serialization.
 3. For UI changes, **verify visually by screenshot** — this is a real Win32 window.

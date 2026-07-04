@@ -65,15 +65,17 @@ mingw32-make clean    # remove build/
 - The `test` target compiles only `tests/test_core.cpp` + `model/Scoring.cpp` +
   `model/Serialization.cpp` + `model/AppConfig.cpp` (no ImGui) and links
   `-lshell32`.
-- **No header-dependency tracking.** The compile rule is `$(OBJDIR)/%.o: %.cpp`
-  only — it does **not** depend on headers. So editing a header (e.g. `App.h`,
-  `Project.h`) does **not** recompile the `.cpp` files that include it. If the edit
-  changes a struct's layout (add/remove/reorder a member of `App`, `Cell`, …), the
-  un-recompiled TUs keep the **old layout** → an ODR/layout mismatch across object
-  files → **memory corruption** (intermittent `0xC0000005` / `0xC0000374` heap
-  crashes, "far from the cause"). **After editing any header, run
-  `mingw32-make clean && mingw32-make`** (an incremental build is unsafe). This is a
-  known footgun until the Makefile grows `-MMD -MP` auto-dep generation.
+- **Header-dependency tracking (`-MMD -MP`).** The object rule compiles with
+  `$(DEPFLAGS) = -MMD -MP`, emitting a `build/obj/**/*.d` beside each `.o` that lists
+  the (non-system) headers it includes; the Makefile `-include $(DEPS)`s them at the
+  bottom. So editing a header now recompiles **every** `.cpp` that includes it (e.g.
+  touching `App.h` rebuilds `main`, `App`, and the `ui/*` screens) — incremental
+  builds are safe. *Why it matters:* before this, header edits recompiled nothing, so
+  a struct-layout change (add/remove/reorder a member of `App`, `Cell`, …) left stale
+  objects with the **old layout** → an ODR/layout mismatch → intermittent
+  `0xC0000005` / `0xC0000374` **memory-corruption** crashes "far from the cause". A
+  full `mingw32-make clean` is now only needed if you ever suspect the `.d` files are
+  out of sync.
 
 **Demo modes** (env var, in-memory only, never saved):
 - `BODEX_DEMO=1` → launch straight into a populated sample grid.
