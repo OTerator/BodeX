@@ -359,6 +359,65 @@ static void testEditorFirstInteractionSync()
     CHECK_NEAR(effectiveMax(qc, cc), 1.0);
 }
 
+// stepAwarded: +/- steps awarded points, sharing the sub-question sync. First '-'
+// on a blank/full cell assumes full marks (baseline = effMax) without deducting yet,
+// so a second '-' takes the first point off; '+' on a blank cell builds up from 0.
+static void testStepAwarded()
+{
+    Question qe; qe.title = "Qe"; qe.maxPoints = 20.0; qe.subCount = 4; qe.split = SplitMode::Equal;
+    Project p = makeProject("Step", 1, {qe});
+    const Question& q = p.questions[0];
+
+    // Fresh cell, '-': assume full (20), no deduction yet; a second '-' -> 19.
+    Cell& a = p.students[0].cells[0] = blankCell(qe);
+    CHECK(!a.touched);
+    stepAwarded(q, a, -1.0);
+    CHECK_NEAR(a.awarded, 20.0);
+    CHECK(a.touched);
+    CHECK(!a.fullTick);
+    stepAwarded(q, a, -1.0);
+    CHECK_NEAR(a.awarded, 19.0);          // two '-' clicks == subtract 1 from full
+
+    // Fresh cell, '+': build up from an empty (0) baseline -> 1.
+    Cell& b = p.students[0].cells[0] = blankCell(qe);
+    stepAwarded(q, b, 1.0);
+    CHECK_NEAR(b.awarded, 1.0);
+    CHECK(b.touched);
+
+    // Full-tick cell, '-': sync to numeric full (20) and clear the tick; then -> 19.
+    Cell& f = p.students[0].cells[0] = blankCell(qe);
+    f.fullTick = true; f.touched = true;
+    stepAwarded(q, f, -1.0);
+    CHECK_NEAR(f.awarded, 20.0);
+    CHECK(!f.fullTick);
+    stepAwarded(q, f, -1.0);
+    CHECK_NEAR(f.awarded, 19.0);
+
+    // Full-tick cell, '+': stays full (already at the ceiling), tick cleared.
+    Cell& g = p.students[0].cells[0] = blankCell(qe);
+    g.fullTick = true;
+    stepAwarded(q, g, 1.0);
+    CHECK_NEAR(g.awarded, 20.0);
+    CHECK(!g.fullTick);
+
+    // Clamps to [0, effMax].
+    Cell& h = p.students[0].cells[0] = blankCell(qe);
+    h.awarded = 1.0; h.touched = true;
+    stepAwarded(q, h, -1.0); CHECK_NEAR(h.awarded, 0.0);
+    stepAwarded(q, h, -1.0); CHECK_NEAR(h.awarded, 0.0);   // floors at 0
+    h.awarded = 19.0;
+    stepAwarded(q, h, 1.0); CHECK_NEAR(h.awarded, 20.0);
+    stepAwarded(q, h, 1.0); CHECK_NEAR(h.awarded, 20.0);   // caps at effMax
+
+    // First-interaction baseline respects locked sub-questions: skip 1 of 4 -> effMax
+    // 15, so '-' assumes 15 (not the full 20).
+    Cell& k = p.students[0].cells[0] = blankCell(qe);
+    k.subAnswered = 3;                    // one skipped -> lock 5 -> effMax 15
+    CHECK_NEAR(effectiveMax(q, k), 15.0);
+    stepAwarded(q, k, -1.0);
+    CHECK_NEAR(k.awarded, 15.0);
+}
+
 // subChecks survive a round-trip; a pre-v2 file loads as all-answered so its old
 // (reference-only X/Y) scores are preserved rather than retro-deducted.
 static void testSubChecksAndMigration()
@@ -405,6 +464,7 @@ int main()
     testSubQuestionDeduction();
     testEditorAdjust();
     testEditorFirstInteractionSync();
+    testStepAwarded();
     testSubChecksAndMigration();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);

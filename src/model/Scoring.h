@@ -47,6 +47,17 @@ bool cellOverMax(const Question& q, const Cell& c);
 void setAnsweredCount(const Question& q, Cell& c, int newAnswered);        // Equal split
 void setSubAnswered(const Question& q, Cell& c, int index, bool answered); // Custom split
 
+// Step a cell's awarded points by `delta` (typically +1 / -1), sharing the same
+// first-interaction sync as the sub-question helpers above:
+//   * First interaction (blank `!touched`, or a full tick): the ticked state is
+//     assumed correct, so the baseline is `effectiveMax`. A `-` (or any step on a
+//     full cell) syncs to that full baseline *without* deducting yet — so a second
+//     `-` is what takes the first point off. A `+` on a blank cell instead builds up
+//     from an empty (0) baseline.
+//   * Afterwards: `awarded += delta`, clamped into [0, effectiveMax].
+// Clears `fullTick` and marks the cell touched. GUI-free so it is unit-tested.
+void stepAwarded(const Question& q, Cell& c, double delta);
+
 // Simple class-wide summary for the status bar.
 struct ClassStats {
     int    students = 0; // total rows

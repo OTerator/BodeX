@@ -47,6 +47,10 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
   (blue outline) moves with the arrow keys; type a number for inline awarded-points
   entry (Enter/Tab commit + advance, Esc cancels); `f` full marks, `n`
   no-submission, `Del` clears, `F2` opens the full editor. See spec.md §9.
+  - **`+`/`-` point stepping** (done): standing on a cell, `+`/`-` steps awarded ±1
+    in place, and the cell editor's `-`/`+` buttons do the same — both mirror the
+    sub-question sync, so the first `-` on a blank/full cell assumes full marks and
+    docks from there (`+` builds up from 0). `gt::stepAwarded`, spec.md §6/§9.
 - ~~**Tick sub-questions to auto-compute the score**~~ — **done** (v2 + sync): cells
   default to all-answered and skipped sub-questions **lock out** their points (equal
   split by count; custom split by per-sub-question ticks, deducting each part's

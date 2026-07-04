@@ -222,6 +222,13 @@ Per-cell effective points, **highest precedence first**:
   5.5/7.5 when one of four equal sub-qs is skipped), unlocking adds them back, then
   clamps `awarded` into `[0, effectiveMax]`. Either way `fullTick` clears once a
   sub-question is skipped and the cell is marked `touched`. GUI-free/tested.
+- `stepAwarded(q, c, delta)` (Scoring.*) steps `awarded` by `delta` (±1) with the
+  **same first-interaction sync**: on a blank (`!touched`) or full-tick cell a `-`
+  (or any step on a full cell) sets the baseline to `effectiveMax` *without*
+  deducting yet — so a second `-` takes the first point off (two `-` == −1 from
+  full) — while a `+` on a blank cell builds up from 0; afterwards `awarded += delta`
+  clamped to `[0, effectiveMax]`. Clears `fullTick`, marks `touched`. Used by the
+  cell editor's −/+ buttons and the grid's `+`/`-` keys (§9). GUI-free/tested.
 - `classStats(p)` = students / graded (no-submission or any touched-or-full cell) /
   average / min / max.
 
@@ -310,8 +317,10 @@ In `GradingTable.cpp`:
 - **Click a student ID** = student menu (No submission toggle).
 - **Keyboard-first grading** (`handleGridKeyboard`): a selected "active" cell
   (`App::activeRow/activeCol`, blue outline) driven from the keyboard — **arrows**
-  move it; **digits/`.`/`-`** begin an inline awarded-points edit; **Space** (mid-edit)
-  steps into an inline **last-page** field; **Enter**/**Tab** commit and advance
+  move it; **digits/`.`** begin an inline awarded-points edit; **`+`/`-`** step the
+  awarded points ±1 in place (first `-` on a blank/full cell assumes full marks —
+  `gt::stepAwarded`; `-` is therefore no longer an inline-edit seed char); **Space**
+  (mid-edit) steps into an inline **last-page** field; **Enter**/**Tab** commit and advance
   (down / right; Shift+Tab left); **Esc** cancels; **`f`**/**`n`** toggle full-marks /
   the row's no-submission; **Del**/**Backspace** clear the cell; **F2** opens the full
   editor. Mechanics detailed below.
@@ -490,9 +499,9 @@ in **non-modal windows** (`imagePreviewWindows`) that stay open beside the grid.
 
 ## 12. Verifying changes (do this, don't just build)
 
-- **Core logic:** `mingw32-make test` (55 checks: scoring rules, JSON string +
-  on-disk round-trip, recent-alias regression). Add cases when you touch model,
-  scoring, or serialization.
+- **Core logic:** `mingw32-make test` (145 checks: scoring rules incl. sub-question
+  sync and `stepAwarded` steps, JSON string + on-disk round-trip, recent-alias
+  regression). Add cases when you touch model, scoring, or serialization.
 - **It builds:** `mingw32-make` with no warnings.
 - **GUI, visually:** the app is a real Win32 window; verify by screenshot. Launch
   with a demo mode and capture with **PrintWindow** (not screen-copy — a background

@@ -74,12 +74,20 @@ void cellEditorPopup(App& app)
     // all answered). Manually awarded points are capped at it.
     const double effMax = gt::effectiveMax(q, c);
 
+    // Awarded points: -/+ step buttons dock from full (first '-' on a blank or full
+    // cell assumes full marks, later presses deduct — see gt::stepAwarded), plus a
+    // field for an exact value. The buttons act even on a full tick (that is the
+    // "assume full then dock" path), so they sit outside the disabled block.
+    if (ImGui::Button("-##award")) { gt::stepAwarded(q, c, -1.0); app.markDirty(); }
+    ImGui::SameLine();
+    if (ImGui::Button("+##award")) { gt::stepAwarded(q, c, +1.0); app.markDirty(); }
+    ImGui::SameLine();
     ImGui::BeginDisabled(c.fullTick);
     double awarded = c.awarded;
     ImGui::SetNextItemWidth(140);
     char awardedLabel[48];
     std::snprintf(awardedLabel, sizeof(awardedLabel), "Awarded points (max %s)", fmtNum(effMax).c_str());
-    if (ImGui::InputDouble(awardedLabel, &awarded, 0.5, 1.0, "%.2f")) {
+    if (ImGui::InputDouble(awardedLabel, &awarded, 0.0, 0.0, "%.2f")) {  // step 0 -> no built-in buttons
         if (awarded < 0.0)    awarded = 0.0;
         if (awarded > effMax) awarded = effMax;
         c.awarded = awarded;

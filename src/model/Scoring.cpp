@@ -115,6 +115,25 @@ void setSubAnswered(const Question& q, Cell& c, int index, bool answered)
     c.touched = true;
 }
 
+void stepAwarded(const Question& q, Cell& c, double delta)
+{
+    const double em = effectiveMax(q, c);
+    if (!c.touched || c.fullTick) {
+        // First interaction on a blank or full-tick cell (mirrors the sub-question
+        // sync): the cell's ticked state is assumed correct.
+        const bool wasFull = c.fullTick;          // a full tick counts as "already full"
+        c.fullTick = false;
+        if (delta < 0.0 || wasFull)
+            c.awarded = em;                       // baseline = full; this press only
+                                                  // establishes it (no numeric deduct yet)
+        else
+            c.awarded = clampCell(delta, em);     // '+' on a blank cell: build up from 0
+    } else {
+        c.awarded = clampCell(c.awarded + delta, em);
+    }
+    c.touched = true;
+}
+
 ClassStats classStats(const Project& p)
 {
     ClassStats st;

@@ -398,8 +398,9 @@ void handleGridKeyboard(App& app)
         else             { if (c < M - 1) { ++c; moved = true; } }
     }
 
-    gt::Student& s    = p.students[static_cast<size_t>(r)];
-    gt::Cell&    cell = s.cells[static_cast<size_t>(c)];
+    gt::Student&  s    = p.students[static_cast<size_t>(r)];
+    gt::Cell&     cell = s.cells[static_cast<size_t>(c)];
+    gt::Question& q    = p.questions[static_cast<size_t>(c)];
 
     // ---- single-key actions (no key-repeat) ----
     if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) {           // open the full editor
@@ -421,15 +422,32 @@ void handleGridKeyboard(App& app)
         app.markDirty();
     }
 
-    // ---- type a digit/./- to begin inline awarded-points entry ----
+    // ---- +/- step the active cell's awarded points ----
+    // '-' docks a point (the first '-' on a blank/full cell assumes full marks, per
+    // gt::stepAwarded); '+' adds one (building up from 0 on a blank cell). Numpad and
+    // main-row keys both emit these chars, so reading the char queue covers both;
+    // consume it so the char can't also seed an inline edit below.
+    if (!s.noSubmission && !io.InputQueueCharacters.empty()) {
+        bool stepped = false;
+        for (ImWchar ch : io.InputQueueCharacters) {
+            if (ch == '-')      { gt::stepAwarded(q, cell, -1.0); stepped = true; }
+            else if (ch == '+') { gt::stepAwarded(q, cell, +1.0); stepped = true; }
+        }
+        if (stepped) {
+            app.markDirty();
+            io.InputQueueCharacters.resize(0);
+        }
+    }
+
+    // ---- type a digit/. to begin inline awarded-points entry ----
     // Seed the buffer with the typed character(s) and consume them from the queue,
     // so the first digit isn't lost while the InputText is being focused. The
     // seed's auto-select-all is collapsed by inlineEditCallback so later digits
-    // append rather than replace.
+    // append rather than replace. ('-' is handled above as a step key, not a seed.)
     if (!s.noSubmission && !io.InputQueueCharacters.empty()) {
         std::string seed;
         for (ImWchar ch : io.InputQueueCharacters)
-            if ((ch >= '0' && ch <= '9') || ch == '.' || ch == '-')
+            if ((ch >= '0' && ch <= '9') || ch == '.')
                 seed.push_back(static_cast<char>(ch));
         if (!seed.empty()) {
             app.gridEditBuf = seed;
@@ -579,7 +597,7 @@ void gradingScreen(App& app)
 
     // ---- status bar ----
     ImGui::TextDisabled("%s", app.statusMsg.empty()
-        ? "Arrows move; type = points; Space adds last page; Enter/Tab commit; F2 edit; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+S saves."
+        ? "Arrows move; type = points; +/- step (first - assumes full); Space adds last page; Enter/Tab commit; F2 edit; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+S saves."
         : app.statusMsg.c_str());
 
     // ---- popups (opened here, after the table, using stored targets) ----
