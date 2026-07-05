@@ -140,7 +140,37 @@ void cellEditorPopup(App& app)
         c.touched = true;
         app.markDirty();
     }
-    if (ImGui::InputTextMultiline("Note", &c.note, ImVec2(280, 56))) { c.touched = true; app.markDirty(); }
+    // Note (Hebrew / RTL aware). Editing runs in logical order — ImGui's InputText
+    // has no RTL mode — under the Hebrew-capable notes font so glyphs render. The
+    // Ctrl+Left-Shift / Ctrl+Right-Shift toggle sets the base direction (Windows
+    // convention) while the field is focused, and the live preview below shows how
+    // the note will read (visual order, right-aligned when RTL).
+    pushNotesFont();
+    const bool noteChanged = ImGui::InputTextMultiline("Note", &c.note, ImVec2(280, 56));
+    popNotesFont();
+    const bool noteActive = ImGui::IsItemActive();
+    if (noteChanged) { c.touched = true; app.markDirty(); }
+
+    if (noteActive && ImGui::GetIO().KeyCtrl) {
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftShift, false))  { c.noteDir = gt::TextDir::LTR; app.markDirty(); }
+        if (ImGui::IsKeyPressed(ImGuiKey_RightShift, false)) { c.noteDir = gt::TextDir::RTL; app.markDirty(); }
+    }
+
+    const char* dirLabel = (c.noteDir == gt::TextDir::LTR) ? "LTR"
+                         : (c.noteDir == gt::TextDir::RTL) ? "RTL" : "auto";
+    ImGui::TextDisabled("note dir: %s   (Ctrl+Shift:  L = left-to-right,  R = right-to-left)", dirLabel);
+    if (!c.note.empty()) {
+        const std::string vis = gt::ui::noteVisual(c.note, c.noteDir);
+        const bool rtl = gt::ui::noteIsRtl(c.note, c.noteDir);
+        pushNotesFont();
+        if (rtl) {
+            const float avail = ImGui::GetContentRegionAvail().x;
+            const float tw = ImGui::CalcTextSize(vis.c_str()).x;
+            if (tw < avail) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - tw));
+        }
+        ImGui::TextUnformatted(vis.c_str());
+        popNotesFont();
+    }
 
     ImGui::Separator();
     ImGui::Text("Cell score: %s / %s",

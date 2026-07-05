@@ -19,6 +19,11 @@ namespace gt {
 
 enum class SplitMode { Equal, Custom };
 
+// Base text direction for a cell note. Auto picks left/right-to-left from the first
+// strong character (see model/Bidi.h); LTR/RTL force it (the Ctrl+Left/Right-Shift
+// toggle in the cell editor). Serialized as an int, so keep the order stable.
+enum class TextDir { Auto, LTR, RTL };
+
 // A screenshot attached to a question: either the question itself or a solution
 // reference used to verify checks. Stored as a filename inside the project's
 // ".assets" directory; may be tagged with the sub-question(s) it covers.
@@ -57,6 +62,7 @@ struct Cell {
     std::vector<char> subChecks;         // Custom split only: per-sub answered flags
     std::string       lastPage;
     std::string       note;
+    TextDir           noteDir = TextDir::Auto; // note's base direction (Hebrew/RTL)
     bool              touched = false;   // grader entered something (blank vs explicit 0)
 
     // Value equality (all members are plain values) — used by the undo/redo

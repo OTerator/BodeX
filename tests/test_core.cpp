@@ -5,11 +5,13 @@
 #include <cstdio>
 #include <cmath>
 #include <string>
+#include <initializer_list>
 
 #include "model/Project.h"
 #include "model/Scoring.h"
 #include "model/Serialization.h"
 #include "model/AppConfig.h"
+#include "model/Bidi.h"
 
 static int g_failures = 0;
 static int g_checks = 0;
@@ -54,6 +56,7 @@ static Project buildSample()
     p.students[0].cells[0].touched = true;
     p.students[0].cells[0].lastPage = "p.14";
     p.students[0].cells[0].note = "recheck part b";
+    p.students[0].cells[0].noteDir = TextDir::RTL;
     p.students[0].cells[1].fullTick = true;
     p.students[0].cells[1].touched = true;
 
@@ -134,6 +137,7 @@ static void testRoundTrip()
     CHECK(p2.students[0].cells[0].subAnswered == 3);
     CHECK(p2.students[0].cells[0].lastPage == "p.14");
     CHECK(p2.students[0].cells[0].note == "recheck part b");
+    CHECK(p2.students[0].cells[0].noteDir == TextDir::RTL);
 
     // Scores must be identical after a round-trip.
     CHECK_NEAR(studentTotal(p2, 0), 22.0);
@@ -545,6 +549,7 @@ static void testGradingEquality()
     b = a; b.subAnswered = 3;  CHECK(!(a == b));
     b = a; b.lastPage = "p.3"; CHECK(!(a == b));
     b = a; b.note = "x";       CHECK(!(a == b));
+    b = a; b.noteDir = TextDir::RTL; CHECK(!(a == b)); // direction participates in undo diff
     b = a; b.touched = true;   CHECK(!(a == b));
 
     Cell c1 = blankCell(qc), c2 = c1;
@@ -584,6 +589,80 @@ static void testFirstGradingDiff()
     CHECK(d3.first == 0 && d3.second == 1);
 }
 
+// Reduced BiDi (Bidi.cpp): logical -> visual reordering for Hebrew notes. Hebrew
+// letters are given as codepoints so the test file stays ASCII/source-encoding
+// agnostic. Aleph..Vav = U+05D0..U+05D5.
+static std::u32string u32(std::initializer_list<char32_t> c) { return std::u32string(c); }
+
+static void testBidi()
+{
+    using gt::BaseDir;
+    const char32_t A = 0x05D0, B = 0x05D1, G = 0x05D2, D = 0x05D3, H = 0x05D4, V = 0x05D5;
+
+    // Pure ASCII: order unchanged, base stays LTR.
+    {
+        gt::BidiResult r = gt::bidiReorder(u32({'a', 'b', 'c'}), BaseDir::LTR);
+        CHECK(r.visual == u32({'a', 'b', 'c'}));
+        CHECK(!r.baseRtl);
+    }
+    // Pure Hebrew: reversed to visual order; Auto detects RTL; index maps invert.
+    {
+        gt::BidiResult r = gt::bidiReorder(u32({A, B, G}), BaseDir::Auto);
+        CHECK(r.baseRtl);
+        CHECK(r.visual == u32({G, B, A}));
+        CHECK(r.visualToLogical.size() == 3);
+        CHECK(r.visualToLogical[0] == 2 && r.visualToLogical[2] == 0);
+        CHECK(r.logicalToVisual[0] == 2 && r.logicalToVisual[2] == 0);
+    }
+    // Hebrew reverses even under a forced LTR base (it's still an RTL run).
+    {
+        gt::BidiResult r = gt::bidiReorder(u32({A, B, G}), BaseDir::LTR);
+        CHECK(!r.baseRtl);
+        CHECK(r.visual == u32({G, B, A}));
+    }
+    // Latin then Hebrew, base LTR: "abc " kept, Hebrew reversed after it.
+    {
+        gt::BidiResult r = gt::bidiReorder(u32({'a', 'b', 'c', ' ', A, B, G}), BaseDir::LTR);
+        CHECK(r.visual == u32({'a', 'b', 'c', ' ', G, B, A}));
+    }
+    // Hebrew then Latin, Auto -> RTL base: visual "abc <sp> GBA".
+    {
+        gt::BidiResult r = gt::bidiReorder(u32({A, B, G, ' ', 'a', 'b', 'c'}), BaseDir::Auto);
+        CHECK(r.baseRtl);
+        CHECK(r.visual == u32({'a', 'b', 'c', ' ', G, B, A}));
+    }
+    // Numbers keep LTR order inside an RTL run: "ABG 123 DHV" (base RTL) ->
+    // visual "VHD 123 GBA" (each Hebrew word reversed, the number run intact).
+    {
+        gt::BidiResult r = gt::bidiReorder(
+            u32({A, B, G, ' ', '1', '2', '3', ' ', D, H, V}), BaseDir::RTL);
+        CHECK(r.visual == u32({V, H, D, ' ', '1', '2', '3', ' ', G, B, A}));
+    }
+    // UTF-8 helpers round-trip; the convenience wrappers agree with the reorder.
+    {
+        const std::u32string cps = u32({A, B, G});
+        const std::string utf8 = gt::codepointsToUtf8(cps);
+        CHECK(gt::utf8ToCodepoints(utf8) == cps);
+        CHECK(gt::bidiVisualUtf8(utf8, BaseDir::Auto) == gt::codepointsToUtf8(u32({G, B, A})));
+        CHECK(gt::bidiBaseIsRtl(utf8, BaseDir::Auto));
+        CHECK(!gt::bidiBaseIsRtl("abc", BaseDir::Auto));
+    }
+    // Multiline: each line reorders independently and the '\n' keeps its place.
+    {
+        gt::BidiResult r = gt::bidiReorder(u32({A, B, '\n', 'a', 'b'}), BaseDir::Auto);
+        CHECK(r.visual.size() == 5);
+        CHECK(r.visual[0] == B && r.visual[1] == A); // line 1 reversed
+        CHECK(r.visual[2] == '\n');                  // separator fixed
+        CHECK(r.visual[3] == 'a' && r.visual[4] == 'b'); // line 2 (LTR run) kept
+    }
+    // Empty string is a no-op.
+    {
+        gt::BidiResult r = gt::bidiReorder(std::u32string(), BaseDir::Auto);
+        CHECK(r.visual.empty());
+        CHECK(!r.baseRtl);
+    }
+}
+
 int main()
 {
     testScoring();
@@ -601,6 +680,7 @@ int main()
     testSubChecksAndMigration();
     testGradingEquality();
     testFirstGradingDiff();
+    testBidi();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     if (g_failures == 0)

@@ -1,5 +1,8 @@
 #include "ui/widgets.h"
 
+#include "model/Project.h" // gt::TextDir
+#include "model/Bidi.h"
+
 #include <cstdio>
 
 namespace gt::ui {
@@ -33,6 +36,37 @@ void bigTitle(const char* text, float px)
     ImGui::PushFont(nullptr, px); // keep current font family, larger size
     ImGui::TextUnformatted(text);
     ImGui::PopFont();
+}
+
+// The Hebrew-capable font for cell notes (nullptr until main.cpp loads it, and if
+// the font file is missing it stays nullptr — notes then use the default font).
+static ImFont* g_notesFont = nullptr;
+
+void    setNotesFont(ImFont* f) { g_notesFont = f; }
+ImFont* notesFont()             { return g_notesFont; }
+
+// PushFont(font, 0.0f) swaps the family but keeps the current size; a null font
+// keeps the current family too, so this is always safe and always balanced by pop.
+void pushNotesFont() { ImGui::PushFont(g_notesFont, 0.0f); }
+void popNotesFont()  { ImGui::PopFont(); }
+
+static gt::BaseDir baseDirOf(gt::TextDir d)
+{
+    switch (d) {
+        case gt::TextDir::LTR: return gt::BaseDir::LTR;
+        case gt::TextDir::RTL: return gt::BaseDir::RTL;
+        default:               return gt::BaseDir::Auto;
+    }
+}
+
+std::string noteVisual(const std::string& logicalUtf8, gt::TextDir dir)
+{
+    return gt::bidiVisualUtf8(logicalUtf8, baseDirOf(dir));
+}
+
+bool noteIsRtl(const std::string& logicalUtf8, gt::TextDir dir)
+{
+    return gt::bidiBaseIsRtl(logicalUtf8, baseDirOf(dir));
 }
 
 } // namespace gt::ui

@@ -116,8 +116,8 @@ BODEX_DEMO=1 ./build/BodeX.exe
    commits and moves down, **Tab** commits and moves right, **Esc** cancels. **`f`**
    (on the grid) toggles full marks, **`n`** toggles *No submission* for the row,
    **Del** clears the cell, **`e`** or **F2** opens the full cell editor, and **F1**
-   shows a shortcuts cheat-sheet. Clicking a cell also moves the selection there, so
-   mouse and keyboard mix freely.
+   (or **Help → Keyboard Shortcuts**) shows a shortcuts cheat-sheet. Clicking a cell
+   also moves the selection there, so mouse and keyboard mix freely.
 4. Click a **student ID** to mark *No submission* (row scores 0).
 5. **Undo / redo.** **Ctrl+Z** undoes the last grading action, **Ctrl+Y** (or
    **Ctrl+Shift+Z**) redoes it — also on the **Edit** menu. A whole right-drag paint
@@ -128,6 +128,12 @@ BODEX_DEMO=1 ./build/BodeX.exe
    work is **autosaved** every ~30s (and when you switch away or quit); if BodeX
    closes unexpectedly, the next launch offers to **recover** it. Autosave is a safety
    net only — your `.json` is still written by Save.
+
+**Notes can be Hebrew (right-to-left).** Type a note in any language; a note reads
+correctly right-to-left when it starts with Hebrew, and inside the cell editor
+**Ctrl+Left-Shift** forces left-to-right / **Ctrl+Right-Shift** forces right-to-left
+(the usual Windows convention). A live preview under the note box shows exactly how
+it will read, and the note appears the same way in the grid's hover tooltip.
 
 Click a **question's column header** to open its image menu — add / preview /
 remove the question sheet and solution-reference screenshots, each tagged to the
@@ -158,7 +164,8 @@ src/
   app/App.*                screen state machine, menu, save/exit guard
   ui/                      HomeScreen, NewProjectScreen, GradingTable,
                            CellEditor, widgets, native file dialogs
-  model/                   Project (data), Scoring, Serialization (JSON), AppConfig
+  model/                   Project (data), Scoring, Serialization (JSON), AppConfig,
+                           Bidi (Hebrew/RTL note reordering)
   util/utf.h               UTF-8 <-> UTF-16 helpers
 tests/test_core.cpp        scoring rules + JSON/file round-trip (make test)
 third_party/               Dear ImGui + backends, nlohmann/json (vendored)

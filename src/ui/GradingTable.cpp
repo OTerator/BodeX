@@ -17,6 +17,26 @@
 
 namespace gt::ui {
 
+// Shared grid shortcut legend — see GradingTable.h. Kept ASCII so the default font
+// renders it, and used verbatim by the F1/Help overlay.
+const char* gridShortcutsText()
+{
+    return
+        "Arrows      move selection\n"
+        "0-9 .       type awarded points (inline)\n"
+        "+ / -       step points +/-1 (one press)\n"
+        "Space       open inline edit; Space again = last page\n"
+        "p           edit last page (lp) directly\n"
+        "f           full marks (in editor: FULL, then jump to lp)\n"
+        "e / F2      open the cell editor\n"
+        "n           toggle No-submission (row)\n"
+        "Del         clear the cell\n"
+        "Enter/Tab   commit (down / right); Esc cancels\n"
+        "Ctrl+Z / Y  undo / redo     Ctrl+S  save\n"
+        "Right-drag  paint full marks across a row/column\n"
+        "Notes (in the cell editor): Ctrl+Left-Shift = LTR, Ctrl+Right-Shift = RTL";
+}
+
 namespace {
 
 const ImVec4 kGreenBtn (0.16f, 0.42f, 0.20f, 1.0f);
@@ -118,8 +138,11 @@ void renderGradeCell(App& app, int i, int j)
         }
     }
 
-    if (!s.noSubmission && hovered && (c.touched || c.fullTick) && !c.note.empty())
-        ImGui::SetTooltip("%s", c.note.c_str());
+    if (!s.noSubmission && hovered && (c.touched || c.fullTick) && !c.note.empty()) {
+        pushNotesFont(); // BiDi visual order + Hebrew glyphs for the note tooltip
+        ImGui::SetTooltip("%s", noteVisual(c.note, c.noteDir).c_str());
+        popNotesFont();
+    }
 
     if (pushed) ImGui::PopStyleColor(pushed);
 
@@ -568,9 +591,6 @@ void gradingScreen(App& app)
     // active cell. Before BeginTable so the changes take effect this frame.
     handleGridKeyboard(app);
 
-    // F1 toggles the shortcuts help overlay (drawn after the table, below).
-    if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) app.showShortcuts = !app.showShortcuts;
-
     // ---- grid ----
     const int M = static_cast<int>(p.questions.size());
     const int columns = 1 + M + 1;
@@ -692,28 +712,8 @@ void gradingScreen(App& app)
 
     ImGui::End();
 
-    // Shortcuts help overlay (F1). A plain text window, no interactive widgets, so it
-    // doesn't fight the grid's key handling; NoFocusOnAppearing keeps the grid focused.
-    if (app.showShortcuts) {
-        ImGui::SetNextWindowBgAlpha(0.92f);
-        if (ImGui::Begin("Grid shortcuts (F1)", &app.showShortcuts,
-                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing)) {
-            ImGui::TextUnformatted(
-                "Arrows      move selection\n"
-                "0-9 .       type awarded points (inline)\n"
-                "+ / -       step points +/-1 (one press)\n"
-                "Space       open inline edit; Space again = last page\n"
-                "p           edit last page (lp) directly\n"
-                "f           full marks (in editor: FULL, then jump to lp)\n"
-                "e / F2      open the cell editor\n"
-                "n           toggle No-submission (row)\n"
-                "Del         clear the cell\n"
-                "Enter/Tab   commit (down / right); Esc cancels\n"
-                "Ctrl+Z / Y  undo / redo     Ctrl+S  save\n"
-                "Right-drag  paint full marks across a row/column");
-        }
-        ImGui::End();
-    }
+    // (The F1/Help shortcuts overlay now draws at app level — App::renderShortcutsOverlay
+    // — so it is reachable from the Help menu on every screen, not just here.)
 
     // Image previews are separate, non-modal windows (several can stay open while
     // grading; navigate/zoom them without touching the header popup).

@@ -119,12 +119,15 @@ src/
   ui/GradingTable.*      The grid: header, cells, totals, status bar, popups, and
                          the left-click/drag "paint full marks" gesture.
   ui/CellEditor.*        Cell editor popup + student (no-submission) menu popup.
-  ui/widgets.*           fmtNum(), greenTickCheckbox(), bigTitle().
+  ui/widgets.*           fmtNum(), greenTickCheckbox(), bigTitle(), the notes-font
+                         push/pop + BiDi display helpers (noteVisual/noteIsRtl, §9c).
   ui/platform_dialogs.*  Native Win32 open/save file dialogs (commdlg).
   ui/QuestionImages.*    Column-header image menu (add/preview/remove) + preview window.
   ui/ImageStore.*        Loads images -> D3D11 textures for ImGui::Image (uses stb_image).
   model/Project.h        Data model (header-only) + builders/normalizers.
   model/Scoring.{h,cpp}  Score computation + class stats. GUI-free.
+  model/Bidi.{h,cpp}     Reduced Unicode BiDi (logical<->visual) for Hebrew notes +
+                         portable UTF-8<->codepoint helpers. GUI-free, unit-tested (§9c).
   model/Serialization.*  Project <-> JSON (nlohmann) + UTF-8 file I/O. GUI-free.
   model/AppConfig.*      %APPDATA%\BodeX paths, recent-projects config, nowIso().
   model/Assets.{h,cpp}   Question-image asset dirs + copy/migrate. GUI-free (Win32 file ops).
@@ -149,6 +152,7 @@ Header-only, GUI-free, unit-testable. Core structs:
 
 ```cpp
 enum class SplitMode { Equal, Custom };
+enum class TextDir  { Auto, LTR, RTL }; // note base direction (Hebrew/RTL, §9c)
 
 struct Question {
     std::string title = "Q1";
@@ -165,6 +169,7 @@ struct Cell {
     std::vector<char> subChecks;           // Custom split: per-sub answered flags (1=answered)
     std::string       lastPage;            // resume marker (stored as text; edited as int)
     std::string       note;
+    TextDir           noteDir     = TextDir::Auto; // note base direction (Hebrew/RTL, §9c)
     bool              touched     = false; // distinguishes blank from an explicit 0
 };
 
@@ -280,6 +285,9 @@ Per-cell effective points, **highest precedence first**:
   all-answered (`subAnswered = subCount`, `subChecks` cleared) so no old grade is
   retro-deducted — **scores are preserved**, the stale reference counts are dropped.
   Bump `schemaVersion` and add a migration branch here for any future breaking change.
+  New scalar fields that default sensibly can be added **without** a bump: e.g.
+  `Cell::noteDir` is serialized as an int (`0=Auto`) and older files that omit the
+  key load as `Auto` — additive, so it stayed on schema 2.
 - Config: `%APPDATA%\BodeX\config.json` holds the recent-projects list **and the
   pending-autosave record** (`AutosaveRecord`, §8c); `%APPDATA%\BodeX\projects\` is
   the suggested (not enforced) save dir and `%APPDATA%\BodeX\autosave\` holds the
@@ -453,8 +461,8 @@ In `GradingTable.cpp`:
   page to any cell (incl. a green FULL) without disturbing its score; **Enter**/**Tab**
   commit and advance (down / right; Shift+Tab left); **Esc** cancels; **`f`**/**`n`**
   toggle full-marks / the row's no-submission; **Del**/**Backspace** clear the cell;
-  **`e`**/**F2** open the full editor; **F1** toggles a shortcuts help overlay.
-  Mechanics detailed below.
+  **`e`**/**F2** open the full editor; **F1** (or **Help → Keyboard Shortcuts**)
+  toggles a shortcuts help overlay. Mechanics detailed below.
 
   (L/R were swapped deliberately: the left-click editor uses `IsItemClicked`, which
   is occlusion-aware, so it won't fire for cells hidden under a floating image
@@ -541,9 +549,12 @@ near the top of `gradingScreen`, **before** `BeginTable`, so the selection / scr
   `fullTick`). Leave the buffer alone; the green FULL shows on commit.
 - Toggling full marks via **`f`** (on the grid) leaves `touched` alone (the §6
   invariant), same as the mouse paint. **`e`** mirrors **F2** (open the cell editor).
-  **F1** toggles `App::showShortcuts`, a plain-text help overlay drawn after the
-  `Grading` window (no interactive widgets / `NoFocusOnAppearing`, so it doesn't fight
-  the grid's key handling). Active-cell state lives on `App` (`activeRow/Col`,
+  **F1** toggles `App::showShortcuts`. The overlay itself (`App::renderShortcutsOverlay`)
+  and the F1 keypress are handled at **app level** in `App::render` — not in
+  `gradingScreen` — so **Help → "Keyboard Shortcuts" (F1)** (a live checkbox bound to
+  the same flag) and F1 both work on every screen. The legend text is one shared source,
+  `gt::ui::gridShortcutsText()`; the window has no interactive widgets and uses
+  `NoFocusOnAppearing`, so it doesn't fight the grid's key handling. Active-cell state lives on `App` (`activeRow/Col`,
   `gridEditing`, `gridEditBuf`, `gridEditFocus`, `gridEditDeselect`,
   `gridScrollToActive`) and is reset in `applyLoadedProject`/`closeProject` (indices
   point into the old grid).
@@ -592,13 +603,45 @@ in **non-modal windows** (`imagePreviewWindows`) that stay open beside the grid.
   `imageStoreReleaseAll` before device cleanup. Draw with
   `ImGui::Image((ImTextureID)(intptr_t)srv, size)`.
 
+## 9c. Hebrew / bidirectional (BiDi) cell notes
+
+Cell **notes** support Hebrew and right-to-left text. Two hard facts shape the design:
+Dear ImGui has **no BiDi engine** (it draws/edits glyphs strictly left-to-right in
+memory order and `InputText` has no RTL mode), and the default ProggyClean font is
+ASCII-only. So the feature is three cooperating pieces:
+
+- **Glyphs.** `main.cpp` keeps ProggyClean as the main UI font (`AddFontDefault`) and
+  loads a scalable Hebrew-capable **system** font (Arial → Segoe UI → Tahoma, first
+  that exists) as a *separate* font. `gt::ui::setNotesFont` registers it; the note
+  tooltip and the CellEditor note field wrap their draw in
+  `gt::ui::pushNotesFont()`/`popNotesFont()` (a null font — missing file — just keeps
+  the current font, so it degrades to glyph-less without crashing). The rest of the
+  UI is untouched, so the ASCII-chrome rule (§10/§13) still holds.
+- **Reorder.** `model/Bidi.{h,cpp}` is a **reduced Unicode BiDi Algorithm** (UAX #9)
+  sufficient for Hebrew (strong L/R + basic AL, European/Arabic numbers, neutrals; no
+  explicit embeddings, no Arabic shaping). `bidiReorder(logical, base)` returns the
+  visual codepoint order plus logical↔visual index maps; `bidiVisualUtf8` is the
+  UTF-8 convenience wrapper. Newlines are hard separators (each line reorders
+  independently). GUI-free and **unit-tested** (`testBidi` — pure Hebrew reverses,
+  numbers keep LTR order inside an RTL run, mixed Latin/Hebrew, etc.).
+- **Direction + display.** `Cell::noteDir` (`TextDir{Auto,LTR,RTL}`, §5, serialized
+  §7) is the base-direction override; `Auto` derives it from the first strong char.
+  In the CellEditor, **Ctrl+Left-Shift = LTR / Ctrl+Right-Shift = RTL** (the Windows
+  convention) sets it while the note field is focused. **Editing stays logical-order**
+  (ImGui limitation) but a live **BiDi preview** below the field — and the grid
+  hover **tooltip** — render `gt::ui::noteVisual(note, dir)` (right-aligned when
+  `noteIsRtl`) so short Hebrew notes read correctly. A fully visual-order editable
+  widget (mapping caret/selection through the index maps) is the parked Phase-2 step
+  (NOTES.md); the maps already exist in `BidiResult` for it.
+
 ## 10. ImGui 1.92 specifics & gotchas
 
 - Vendored ImGui is **1.92.9 (master)** with matching win32 + dx11 backends and
   `misc/cpp/imgui_stdlib` (for `InputText(label, std::string*)`).
-- Fonts: only the default font (ProggyClean) is loaded → **ASCII glyphs only**.
-  Do **not** use non-ASCII glyphs (✓, —, •, …) in UI strings; they render as
-  boxes. Use `FULL`, `-`, `|`, etc.
+- Fonts: the main UI font is the default (ProggyClean) → **ASCII glyphs only**, so do
+  **not** use non-ASCII glyphs (✓, —, •, …) in UI strings; they render as boxes. Use
+  `FULL`, `-`, `|`, etc. **Exception:** cell *note* data can be Hebrew — it uses a
+  separate Hebrew-capable font pushed only around the note widgets (§9c).
 - Large text: `PushFont(nullptr, px)` / `PopFont()` (1.92 two-arg form) — see
   `bigTitle`. The single-arg `PushFont` no longer exists.
 - **DPI:** the app manifest (`resources/app.manifest`) declares PerMonitorV2, and
@@ -682,7 +725,8 @@ in **non-modal windows** (`imagePreviewWindows`) that stay open beside the grid.
   are the only model files that touch Win32, and only for file paths / appdata).
 - Prefer editing the existing modules over adding new ones; screens are small
   immediate-mode functions.
-- ASCII-only in UI strings (font limitation, see §10).
+- ASCII-only in UI **chrome** strings (font limitation, see §10). User *note* data
+  is exempt — it renders through the Hebrew-capable notes font (§9c).
 - All user-facing text/paths are UTF-8 in the model; convert at the Win32 boundary
   with `util/utf.h`.
 - `build/` and `.claude/settings.local.json` are git-ignored; vendored

@@ -50,6 +50,7 @@ json cellToJson(const Cell& c)
         {"subChecks", std::move(subChecks)},
         {"lastPage", c.lastPage},
         {"note", c.note},
+        {"noteDir", static_cast<int>(c.noteDir)},
         {"touched", c.touched},
     };
 }
@@ -65,6 +66,9 @@ Cell cellFromJson(const json& j)
             c.subChecks.push_back(v.get<int>() ? 1 : 0);
     c.lastPage    = j.value("lastPage", std::string());
     c.note        = j.value("note", std::string());
+    int nd        = j.value("noteDir", 0);            // additive; old files -> Auto (0)
+    if (nd < 0 || nd > 2) nd = 0;
+    c.noteDir     = static_cast<TextDir>(nd);
     c.touched     = j.value("touched", false);
     return c;
 }

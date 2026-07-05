@@ -63,7 +63,9 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
     and inside the inline editor `f` marks the cell **FULL** and hops into the `lp:`
     field, so *full + a page* is `Space → f → number → Enter`. spec.md §9.
   - **Shortcuts help overlay** (done): `F1` toggles an on-screen legend of the grid
-    keys (`App::showShortcuts`), for discoverability. spec.md §9.
+    keys (`App::showShortcuts`), for discoverability. Now also reachable from
+    **Help → "Keyboard Shortcuts" (F1)** (a live checkbox) and handled at app level
+    (`App::renderShortcutsOverlay`), so it works on every screen. spec.md §9.
   - *Future:* a **configurable step size** for `+`/`-` (e.g. 0.5) — belongs in the
     settings panel below. A **quick inline note (`c`)** and **keyboard range-full**
     (Shift+arrows to select, then `f`) are natural next keyboard wins.
@@ -126,13 +128,36 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 - **Roster import (IDs → names)** from CSV, shown in the ID column and exports.
 - **Reusable deduction/comment snippets (rubric)** applied per sub-question for
   consistency and speed.
+- ~~**Hebrew / RTL cell notes**~~ — **done (Phase 1):** a self-contained reduced
+  Unicode BiDi engine (`model/Bidi.*`, unit-tested) reorders logical→visual so
+  Hebrew (and mixed Hebrew/Latin/numbers) reads correctly; a Hebrew-capable system
+  font is loaded for the note widgets only; `Cell::noteDir` (`Auto`/LTR/RTL) is
+  toggled with the Windows-standard **Ctrl+Left-Shift / Ctrl+Right-Shift**; the grid
+  tooltip and a live CellEditor **preview** show visual order (right-aligned when
+  RTL). spec.md §9c.
+  - *Future — Phase 2 (custom RTL editor):* editing still runs in ImGui's
+    logical-order `InputText` (no RTL caret/selection). A visual-order editable note
+    widget would map caret/mouse through the `BidiResult` logical↔visual index maps
+    (already produced by `bidiReorder`) and handle input/backspace/selection itself.
+    Sizeable — reimplements a chunk of `InputText`; weigh against how long grading
+    notes really get.
+
+**Settings & display**
+- **Settings menu** — promote the scattered settings notes into one first-class
+  screen/dialog: font size / theme, the **`+`/`-` step size** (e.g. 0.5 vs 1),
+  per-question rubric notes at config time, and the **notes font / default text
+  direction** (see the Hebrew/BiDi notes work). A top-bar entry that opens a
+  persistent config (extend `AppConfig`).
+- **Ctrl+scroll to zoom the grid** — hold Ctrl and mouse-wheel over the grid to
+  scale it (row height, column widths, cell font) via a per-view zoom factor,
+  independent of the monitor-DPI `style.FontScaleMain`. Especially useful on a
+  second monitor whose resolution/DPI differs from the primary.
 
 **Smaller polish**
 - Search / jump to a student ID.
 - Per-question column show/hide & reorder.
 - Compact-cell eliding for very long `lastPage` values (middle-elide / tooltip).
-- Settings screen (font size / theme; **`+`/`-` step size** e.g. 0.5 vs 1;
-  per-question rubric notes at config time).
+- Settings screen — see **Settings & display → Settings menu** above.
 - CSV/Excel *import* of a roster.
 
 ## Deferred: dock/pin a preview next to the Total column

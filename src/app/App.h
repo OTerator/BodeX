@@ -178,6 +178,7 @@ private:
     bool openGuardPopup_ = false;
 
     void renderMenuBar();
+    void renderShortcutsOverlay(); // F1 / Help -> "Keyboard Shortcuts" legend window
     void applyLoadedProject(gt::Project&& p, const std::string& path);
 
     bool quit_ = false;

@@ -68,7 +68,10 @@ static gt::Project buildDemoProject()
     // Equal-split deduction: Q1 has 5 sub-qs (4 pts each); 2 skipped -> 8 locked out.
     p.students[0].cells[0].awarded = 12; p.students[0].cells[0].subAnswered = 3;
     p.students[0].cells[0].touched = true; p.students[0].cells[0].lastPage = "14";
-    p.students[0].cells[0].note = "recheck part b";
+    // Hebrew note (UTF-8 literal; means "recheck section 2") shows off the BiDi/RTL
+    // notes support — the trailing "2" stays left-to-right inside the RTL text.
+    p.students[0].cells[0].note = "בדוק סעיף 2";
+    p.students[0].cells[0].noteDir = gt::TextDir::Auto;
     p.students[0].cells[1].fullTick = true; p.students[0].cells[1].touched = true;
     p.students[1].noSubmission = true;
     p.students[2].cells[0].awarded = 25; p.students[2].cells[0].touched = true; // over max
@@ -135,6 +138,8 @@ void App::render()
         guard(Pending::NewProject);
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O))
         guard(Pending::OpenDialog);
+    if (ImGui::IsKeyPressed(ImGuiKey_F1, false))    // F1: toggle the shortcuts overlay
+        showShortcuts = !showShortcuts;
 
     // Undo/redo (grading grid only). Gated so Ctrl+Z falls through to ImGui's
     // built-in text undo while an input is active (inline edit or a popup field),
@@ -174,6 +179,7 @@ void App::render()
         case Screen::Grading:    gt::ui::gradingScreen(*this);    break;
     }
 
+    renderShortcutsOverlay();  // F1 / Help legend; drawn over any screen
     renderUnsavedPrompt();
     renderRestorePrompt();
 
@@ -219,10 +225,28 @@ void App::renderMenuBar()
     if (ImGui::BeginMenu("Help")) {
         ImGui::MenuItem("BodeX - grading tracker", nullptr, false, false);
         ImGui::MenuItem("Green cell = full marks; ID -> No submission = 0", nullptr, false, false);
+        ImGui::Separator();
+        // Live checkbox mirroring the overlay's open state; F1 toggles the same flag.
+        ImGui::MenuItem("Keyboard Shortcuts", "F1", &showShortcuts);
         ImGui::EndMenu();
     }
 
     ImGui::EndMainMenuBar();
+}
+
+void App::renderShortcutsOverlay()
+{
+    // A plain-text window (no interactive widgets) so it never fights the grid's key
+    // handling; NoFocusOnAppearing keeps the grid focused. Drawn at app level so the
+    // Help menu / F1 reach it on every screen, not just while grading.
+    if (!showShortcuts)
+        return;
+    ImGui::SetNextWindowBgAlpha(0.92f);
+    if (ImGui::Begin("Keyboard Shortcuts (F1)", &showShortcuts,
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing)) {
+        ImGui::TextUnformatted(gt::ui::gridShortcutsText());
+    }
+    ImGui::End();
 }
 
 // ------------------------------------------------------- unsaved-work guard --

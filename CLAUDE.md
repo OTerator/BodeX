@@ -59,8 +59,10 @@ editor open), or `=3` (New Project screen). Demo data is in-memory only.
 - **Toggling/painting full marks must not set `cell.touched`** — a full cell
   counts via `fullTick`; leaving `touched` alone lets un-fulling a blank cell
   return to blank instead of a stray `0`.
-- **ASCII-only UI strings** — the default ImGui font has no other glyphs (no ✓, —,
-  •). Use `FULL`, `-`, `|`.
+- **ASCII-only UI *chrome* strings** — the main font (ProggyClean) has no other
+  glyphs (no ✓, —, •). Use `FULL`, `-`, `|`. **Exception:** cell *note* data may be
+  Hebrew — it renders via a separate Hebrew-capable notes font (spec.md §9c), pushed
+  only around the note widgets, so the chrome rule is unaffected.
 - Grid must stay rectangular — go through `ensureShape` after loading/structural
   changes.
 - All model text/paths are UTF-8; convert at the Win32 boundary via `util/utf.h`.
@@ -105,6 +107,7 @@ recipes. clangd reads `compile_flags.txt`.
 - Prefer editing existing modules over adding new ones; screens are small
   immediate-mode `gt::ui` functions taking `App&`.
 - Match surrounding style and comment density.
-- **Only commit or push when the user explicitly asks.** Repo: `OTerator/BodeX`
+- **At the end of every feature-development session, commit and push using the
+  user's git/github account** — don't wait to be asked. Repo: `OTerator/BodeX`
   (public, MIT). `build/` and `.claude/settings.local.json` are git-ignored;
   vendored `third_party/` is committed so clones build with no downloads.

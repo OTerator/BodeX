@@ -47,7 +47,7 @@ LDLIBS  := -ld3d11 -ld3dcompiler -ldxgi -ldwmapi -lgdi32 -lcomdlg32 -limm32 -lol
 
 # Core-logic test: model only, no ImGui, console app.
 TEST_BIN  := $(BUILD)/test_core.exe
-TEST_SRCS := tests/test_core.cpp src/model/Scoring.cpp src/model/Serialization.cpp src/model/AppConfig.cpp
+TEST_SRCS := tests/test_core.cpp src/model/Scoring.cpp src/model/Serialization.cpp src/model/AppConfig.cpp src/model/Bidi.cpp
 
 .PHONY: all run test clean
 all: $(TARGET)

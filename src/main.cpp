@@ -13,6 +13,8 @@
 
 #include "app/App.h"
 #include "ui/ImageStore.h"
+#include "ui/widgets.h"
+#include "model/AppConfig.h" // gt::fileExists
 
 // ---- D3D11 globals --------------------------------------------------------
 static ID3D11Device*           g_pd3dDevice = nullptr;
@@ -88,6 +90,22 @@ int main(int, char**)
         if (dpiScale > 1.0f)
             style.ScaleAllSizes(dpiScale);
         style.FontScaleMain = dpiScale; // 1.92 global font scale
+    }
+
+    // Fonts: keep ProggyClean (ASCII-only) as the main UI font, and load a scalable
+    // Hebrew-capable system font as a *separate* font used only for cell-note text
+    // (see gt::ui::pushNotesFont). That renders Hebrew where notes appear without
+    // changing the rest of the UI. If the file is missing we simply skip it and
+    // notes fall back to the default font (Hebrew glyphs won't show, no crash).
+    {
+        io.Fonts->AddFontDefault();
+        ImFont* notesFont = nullptr;
+        const char* candidates[] = { "C:\\Windows\\Fonts\\arial.ttf",
+                                     "C:\\Windows\\Fonts\\segoeui.ttf",
+                                     "C:\\Windows\\Fonts\\tahoma.ttf" };
+        for (const char* path : candidates)
+            if (gt::fileExists(path)) { notesFont = io.Fonts->AddFontFromFileTTF(path, 16.0f); break; }
+        gt::ui::setNotesFont(notesFont);
     }
 
     App app;
