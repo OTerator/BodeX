@@ -123,9 +123,29 @@ public:
     bool doSaveAs();                                 // native save dialog -> save
     void closeProject();                             // guarded return to Home
     void requestQuit();                              // guarded quit
-    void markDirty() { dirty = true; }
+    void markDirty() { dirty = true; undoPending_ = true; } // also arms an undo checkpoint
+
+    // ---- undo / redo (grading edits only; see App.cpp) ----
+    void undo();                                     // revert the last grading action
+    void redo();                                     // reapply an undone action
+    bool canUndo() const { return !undoStack_.empty(); }
+    bool canRedo() const { return !redoStack_.empty(); }
 
 private:
+    // Snapshot-coalescing history over the grading grid (project.students only —
+    // images live under project.questions and are excluded). A snapshot is a deep
+    // copy of the students vector; ~tens of KB, so per-action copies are cheap.
+    std::vector<std::vector<gt::Student>> undoStack_;    // past grading states
+    std::vector<std::vector<gt::Student>> redoStack_;    // undone states, for redo
+    std::vector<gt::Student>              undoBaseline_; // last-committed grading state
+    bool                                  undoPending_ = false; // markDirty since baseline
+    static constexpr size_t kUndoDepth = 100;           // cap; oldest dropped past this
+
+    void maybeCommitUndo();     // end-of-frame: checkpoint once an action has settled
+    void resetHistory();        // clear stacks + reseed baseline (new/open/close)
+    void abortInProgressEdit(); // cancel any inline edit / paint gesture before a restore
+    void clampActive();         // keep activeRow/activeCol inside the grid
+
     // Unsaved-changes guard: some actions must offer Save/Discard/Cancel first.
     enum class Pending { None, NewProject, OpenDialog, OpenPath, CloseProject, Quit };
     Pending     pending_ = Pending::None;

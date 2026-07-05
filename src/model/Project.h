@@ -58,6 +58,10 @@ struct Cell {
     std::string       lastPage;
     std::string       note;
     bool              touched = false;   // grader entered something (blank vs explicit 0)
+
+    // Value equality (all members are plain values) — used by the undo/redo
+    // history to detect whether a grading edit actually changed the grid.
+    bool operator==(const Cell& o) const = default;
 };
 
 // One student (row). Just an ID plus a per-question cell vector. noSubmission
@@ -66,6 +70,8 @@ struct Student {
     int               id = 0;
     bool              noSubmission = false;
     std::vector<Cell> cells; // one per question
+
+    bool operator==(const Student& o) const = default; // compares every cell
 };
 
 struct Project {
@@ -200,6 +206,27 @@ inline Project makeProject(std::string name, int studentCount, std::vector<Quest
             s.cells.push_back(blankCell(q));
     }
     return p;
+}
+
+// First cell (row, col) where two grading grids differ, scanning row-major;
+// {-1, -1} if identical. A row-level difference (e.g. noSubmission toggled, or a
+// changed row length) reports {row, 0}. Used by undo/redo to move the selection to
+// the cell that changed so the user sees what was reverted. GUI-free / testable.
+inline std::pair<int, int> firstGradingDiff(const std::vector<Student>& a,
+                                            const std::vector<Student>& b) {
+    const size_t rows = a.size() < b.size() ? a.size() : b.size();
+    for (size_t i = 0; i < rows; ++i) {
+        const Student& sa = a[i];
+        const Student& sb = b[i];
+        if (sa.noSubmission != sb.noSubmission || sa.cells.size() != sb.cells.size())
+            return { static_cast<int>(i), 0 };
+        for (size_t j = 0; j < sa.cells.size(); ++j)
+            if (!(sa.cells[j] == sb.cells[j]))
+                return { static_cast<int>(i), static_cast<int>(j) };
+    }
+    if (a.size() != b.size())
+        return { static_cast<int>(rows), 0 }; // rows added/removed past the common prefix
+    return { -1, -1 };
 }
 
 } // namespace gt

@@ -485,6 +485,61 @@ static void testSubChecksAndMigration()
     CHECK_NEAR(cellPoints(pv.students[0], pv.questions[0], pv.students[0].cells[0]), 12.0);
 }
 
+// Cell/Student value equality (defaulted operator==) drives the undo history's
+// change-detection: every field participates, so a real edit is never missed and a
+// no-op change never fabricates a dead history entry.
+static void testGradingEquality()
+{
+    Question qe; qe.title = "Qe"; qe.maxPoints = 20.0; qe.subCount = 4; qe.split = SplitMode::Equal;
+    Question qc; qc.title = "Qc"; qc.maxPoints = 10.0; qc.subCount = 3; qc.split = SplitMode::Custom;
+    qc.subPoints = {7.0, 2.0, 1.0};
+
+    Cell a = blankCell(qe), b = a;
+    CHECK(a == b);                                   // two fresh identical cells
+    b = a; b.awarded = 5.0;    CHECK(!(a == b));
+    b = a; b.fullTick = true;  CHECK(!(a == b));
+    b = a; b.subAnswered = 3;  CHECK(!(a == b));
+    b = a; b.lastPage = "p.3"; CHECK(!(a == b));
+    b = a; b.note = "x";       CHECK(!(a == b));
+    b = a; b.touched = true;   CHECK(!(a == b));
+
+    Cell c1 = blankCell(qc), c2 = c1;
+    CHECK(c1 == c2);
+    c2.subChecks = {1, 0, 1};  CHECK(!(c1 == c2));   // per-sub answered mask compared
+
+    Student s1; s1.id = 1; s1.cells = {a, c1};
+    Student s2 = s1;
+    CHECK(s1 == s2);
+    s2.noSubmission = true;            CHECK(!(s1 == s2)); // row flag
+    s2 = s1; s2.cells[0].awarded = 9.0; CHECK(!(s1 == s2)); // any cell
+}
+
+// firstGradingDiff finds the first (row,col) two grids differ at (row-major), used
+// to jump the selection to the reverted cell on undo/redo.
+static void testFirstGradingDiff()
+{
+    Question qe; qe.title = "Qe"; qe.maxPoints = 20.0; qe.subCount = 4; qe.split = SplitMode::Equal;
+    Project p = makeProject("Diff", 3, {qe, qe});   // 3 students x 2 questions
+    std::vector<Student> a = p.students, b = a;
+
+    auto d0 = firstGradingDiff(a, b);               // identical
+    CHECK(d0.first == -1 && d0.second == -1);
+
+    b = a; b[1].cells[1].awarded = 5.0; b[1].cells[1].touched = true;
+    auto d1 = firstGradingDiff(a, b);               // single changed cell
+    CHECK(d1.first == 1 && d1.second == 1);
+
+    b = a; b[2].noSubmission = true;
+    auto d2 = firstGradingDiff(a, b);               // row-level change -> col 0
+    CHECK(d2.first == 2 && d2.second == 0);
+
+    b = a;
+    b[0].cells[1].awarded = 1.0; b[0].cells[1].touched = true;
+    b[2].cells[0].awarded = 2.0; b[2].cells[0].touched = true;
+    auto d3 = firstGradingDiff(a, b);               // returns the FIRST difference
+    CHECK(d3.first == 0 && d3.second == 1);
+}
+
 int main()
 {
     testScoring();
@@ -499,6 +554,8 @@ int main()
     testStepAwarded();
     testIsFullMarks();
     testSubChecksAndMigration();
+    testGradingEquality();
+    testFirstGradingDiff();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     if (g_failures == 0)

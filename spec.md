@@ -194,6 +194,14 @@ doesn't need extra .cpp linkage):
   `1..N`, resize rows, and keep each cell's `subAnswered`/`subChecks` consistent
   with its question. Called after every load.
 - `makeProject(name, N, questions)` — build an N×M project of `blankCell`s.
+- `firstGradingDiff(a, b)` — first `(row, col)` where two `students` vectors differ,
+  scanning row-major; `{-1, -1}` if identical, `{row, 0}` for a row-level change
+  (noSubmission / row length). Used by undo/redo (§8b) to jump the selection to the
+  reverted cell.
+
+`Cell` and `Student` have a **defaulted `operator==`** (C++20) — every field
+participates. The undo history (§8b) uses it to tell whether a grading edit actually
+changed the grid (so image-only edits don't fabricate a dead undo step).
 
 ---
 
@@ -289,11 +297,12 @@ box (`WM_CLOSE`) is routed through `App::requestQuit()` so the unsaved-changes
 guard also covers the X button.
 
 `App` is a simple screen state machine: `Screen { Home, NewProject, Grading }`.
-`render()` handles global shortcuts (Ctrl+S/N/O), draws the main menu bar, then
-the current screen, then the unsaved-changes modal. It also **toggles
-`ImGuiConfigFlags_NavEnableKeyboard`** per frame: OFF on the bare grading grid (so
-its keyboard-first grading owns the arrows/Tab — see §9), ON for popups and the
-Home/NewProject screens.
+`render()` handles global shortcuts (Ctrl+S/N/O, and Ctrl+Z / Ctrl+Y undo-redo —
+§8b), draws the main menu bar (File / **Edit** / Help), then the current screen,
+then the unsaved-changes modal, and finally calls `maybeCommitUndo()` (§8b). It also
+**toggles `ImGuiConfigFlags_NavEnableKeyboard`** per frame: OFF on the bare grading
+grid (so its keyboard-first grading owns the arrows/Tab — see §9), ON for popups and
+the Home/NewProject screens.
 
 Actions: `newProjectStart`, `createProjectFromDraft`, `openProjectDialog`,
 `openProjectPath`, `doSave` (falls back to `doSaveAs` when no path), `doSaveAs`,
@@ -318,6 +327,54 @@ after their trigger.
 
 ---
 
+## 8b. Undo / redo history (`App.cpp`)
+
+A **coalescing snapshot history** over the grading grid. A snapshot is a deep copy
+of **`project.students` only** — the grading data. `Cell`/`Student` are pure value
+types, so a copy of a realistic grid is tens of KB (sub-millisecond). State on `App`:
+`undoStack_`, `redoStack_` (`vector<vector<gt::Student>>`), `undoBaseline_` (the
+last-committed grading state), `undoPending_`, and `kUndoDepth` (100).
+
+**Why students-only.** Questions are edited only *before* creation (New Project
+screen); post-creation the sole mutable part of `project.questions` is `images`. So
+"grading data" is exactly `project.students`. Snapshotting only that (1) keeps
+question-image add/remove **out** of history — the confirmed scope — and (2) leaves
+`App::previews` valid across a restore (they index into `questions[].images`, which
+restore never touches), so open preview windows aren't disturbed.
+
+**How it commits (no per-site instrumentation).** `markDirty()` — the one signal all
+19 grading mutation sites already call (§6, §9) — now also sets `undoPending_`.
+`maybeCommitUndo()` runs at the **end of every `render()`** and checkpoints only once
+the action has *settled*: it early-returns while `paintActive || gridEditing ||
+gridEditPageActive || ImGui::IsAnyItemActive()`. That gate collapses a multi-frame
+action — a right-drag paint, a typed inline edit, or typing in a cell-editor field —
+into a **single** history entry. On commit it pushes `undoBaseline_` to `undoStack_`
+(capped at `kUndoDepth`, oldest dropped), clears `redoStack_`, and adopts the current
+grid as the new baseline. The `project.students == undoBaseline_` guard (via the
+model's defaulted `operator==`, §5) is what enforces grading-only: an image add/remove
+sets `undoPending_` but leaves `students` unchanged, so **no** entry is created.
+
+**Restore (`undo`/`redo`).** Move the current `students` onto the opposite stack, pop
+the target snapshot into `project.students`, reseed `undoBaseline_`, set `dirty`, and
+`abortInProgressEdit()` first (cancels any inline edit / paint gesture). The selection
+jumps to `firstGradingDiff(before, after)` (§5) and `gridScrollToActive` is set, so the
+grader sees what changed. `clampActive()` keeps the indices in range defensively.
+
+**Shortcuts & menu.** `render()` fires `undo()`/`redo()` on Ctrl+Z / Ctrl+Y (and
+Ctrl+Shift+Z), **gated** on `screen == Grading && !gridEditing && !anyPopup &&
+!IsAnyItemActive()` so Ctrl+Z falls through to ImGui's built-in field text-undo while
+editing. The **Edit** menu (`renderMenuBar`) has Undo/Redo items, greyed via
+`canUndo()`/`canRedo()`. History is in-memory only and `resetHistory()` clears it on
+every wholesale project swap (`createProjectFromDraft`, `applyLoadedProject`,
+`closeProject`, the demo build).
+
+*Extending it:* any **new** grading mutation is undoable for free as long as it calls
+`markDirty()` and writes into `project.students`. A future edit that mutates
+`project.questions` at grading time would need its own handling (or would ride along
+only if the snapshot type widened to the whole `Project`).
+
+---
+
 ## 9. Grading grid interactions (important detail)
 
 In `GradingTable.cpp`:
@@ -326,6 +383,9 @@ In `GradingTable.cpp`:
 - **Left-click a cell** = open the detailed cell editor (also moves the keyboard
   selection there).
 - **Click a student ID** = student menu (No submission toggle).
+- **Undo / redo** (Ctrl+Z / Ctrl+Y) are resolved in `App::render` (§8b), **not**
+  here — gated so that while an inline edit is open Ctrl+Z stays the InputText's own
+  text-undo rather than a document undo.
 - **Keyboard-first grading** (`handleGridKeyboard`): a selected "active" cell
   (`App::activeRow/activeCol`, blue outline) driven from the keyboard — **arrows**
   move it; **digits/`.`** begin an inline awarded-points edit; **`+`/`-`** step the
@@ -518,9 +578,10 @@ in **non-modal windows** (`imagePreviewWindows`) that stay open beside the grid.
 
 ## 12. Verifying changes (do this, don't just build)
 
-- **Core logic:** `mingw32-make test` (157 checks: scoring rules incl. sub-question
+- **Core logic:** `mingw32-make test` (173 checks: scoring rules incl. sub-question
   sync, one-press `stepAwarded`, and `isFullMarks`, JSON string + on-disk round-trip,
-  recent-alias regression). Add cases when you touch model, scoring, or serialization.
+  recent-alias regression, plus `Cell`/`Student` `operator==` and `firstGradingDiff`
+  for the undo history — §8b). Add cases when you touch model, scoring, or serialization.
 - **It builds:** `mingw32-make` with no warnings.
 - **GUI, visually:** the app is a real Win32 window; verify by screenshot. Launch
   with a demo mode and capture with **PrintWindow** (not screen-copy — a background

@@ -98,6 +98,7 @@ App::App()
             dirty = true;
             screen = Screen::Grading;
             assetsDir = gt::liveAssetsDir(project, projectPath);
+            resetHistory();
             if (*d == '2') {            // BODEX_DEMO=2 also opens the cell editor
                 editorStudent = 0;
                 editorQuestion = 0;
@@ -119,6 +120,23 @@ void App::render()
         guard(Pending::NewProject);
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O))
         guard(Pending::OpenDialog);
+
+    // Undo/redo (grading grid only). Gated so Ctrl+Z falls through to ImGui's
+    // built-in text undo while an input is active (inline edit or a popup field),
+    // and so a modal popup isn't undone out from under. IsKeyChordPressed matches
+    // modifiers exactly, so Ctrl+Z (undo) and Ctrl+Shift+Z (redo) don't collide.
+    {
+        const bool anyPopup = ImGui::IsPopupOpen(nullptr,
+            ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        if (screen == Screen::Grading && !gridEditing && !anyPopup &&
+            !ImGui::IsAnyItemActive()) {
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z))
+                undo();
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y) ||
+                ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z))
+                redo();
+        }
+    }
 
     // The bare grading grid drives its own keyboard (arrows/Tab/type-to-edit), so
     // turn ImGui's built-in keyboard nav OFF there or it would fight us (steal Tab,
@@ -142,6 +160,11 @@ void App::render()
     }
 
     renderUnsavedPrompt();
+
+    // After everything is drawn: checkpoint the frame's grading edit (if any) once
+    // the action has settled. Placed last so paint/inline-edit flags reflect the
+    // end-of-frame state.
+    maybeCommitUndo();
 }
 
 void App::renderMenuBar()
@@ -164,6 +187,14 @@ void App::renderMenuBar()
             guard(Pending::CloseProject);
         if (ImGui::MenuItem("Exit", "Alt+F4"))
             guard(Pending::Quit);
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Edit")) {
+        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, canUndo()))
+            undo();
+        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, canRedo()))
+            redo();
         ImGui::EndMenu();
     }
 
@@ -259,6 +290,7 @@ void App::createProjectFromDraft()
     dirty = true;                 // new, unsaved
     screen = Screen::Grading;
     assetsDir = gt::liveAssetsDir(project, projectPath); // staging until first save
+    resetHistory();
     statusMsg = "New project created - use Save to write it to disk.";
 }
 
@@ -296,6 +328,7 @@ void App::applyLoadedProject(gt::Project&& p, const std::string& path)
     dirty = false;
     screen = Screen::Grading;
     assetsDir = gt::liveAssetsDir(project, path);
+    resetHistory();
     gt::addRecentProject(config, path);
     gt::saveConfig(config);
     statusMsg = "Opened " + path;
@@ -364,6 +397,7 @@ void App::closeProject()
     gridEditPageActive = false;
     gridEditScoreDirty = false;
     gridEditSuppressSpace = false;
+    resetHistory();
     screen = Screen::Home;
     statusMsg = "Project closed.";
 }
@@ -371,4 +405,103 @@ void App::closeProject()
 void App::requestQuit()
 {
     guard(Pending::Quit);
+}
+
+// ----------------------------------------------------------- undo / redo -----
+//
+// The history is a coalescing snapshot stack over the grading grid
+// (project.students). markDirty() arms undoPending_; maybeCommitUndo() runs at the
+// end of every frame and, once the current action has *settled*, moves the previous
+// baseline onto the undo stack and adopts the current grid as the new baseline. The
+// settle gates (no paint drag, no inline edit, no active ImGui item) collapse a
+// multi-frame action — a paint drag, a typed inline edit, or typing in a cell-editor
+// field — into a single history entry. Image add/remove marks the project dirty too
+// but leaves project.students unchanged, so the equality guard skips it: history is
+// grading-data-only, matching the roadmap scope.
+
+void App::resetHistory()
+{
+    undoStack_.clear();
+    redoStack_.clear();
+    undoBaseline_ = project.students; // current grid is the baseline for a fresh timeline
+    undoPending_ = false;
+}
+
+void App::maybeCommitUndo()
+{
+    if (!undoPending_)
+        return;
+    if (screen != Screen::Grading) { undoPending_ = false; return; }
+    // Don't checkpoint in the middle of a still-running action.
+    if (paintActive || gridEditing || gridEditPageActive)
+        return;
+    if (ImGui::IsAnyItemActive())          // a cell-editor input is being edited
+        return;
+    undoPending_ = false;
+    if (project.students == undoBaseline_)  // nothing grading-relevant changed
+        return;
+    undoStack_.push_back(std::move(undoBaseline_));
+    if (undoStack_.size() > kUndoDepth)
+        undoStack_.erase(undoStack_.begin());
+    redoStack_.clear();                     // a fresh edit forks the timeline
+    undoBaseline_ = project.students;       // deep copy of the now-current grid
+}
+
+void App::abortInProgressEdit()
+{
+    gridEditing = false;
+    gridEditPageActive = false;
+    gridEditScoreDirty = false;
+    gridEditSuppressSpace = false;
+    gridEditBuf.clear();
+    gridEditPageBuf.clear();
+    paintActive = false;
+    paintIsDrag = false;
+    paintAxis = 0;
+}
+
+void App::clampActive()
+{
+    const int rows = static_cast<int>(project.students.size());
+    const int cols = static_cast<int>(project.questions.size());
+    if (activeRow >= rows) activeRow = rows > 0 ? rows - 1 : 0;
+    if (activeCol >= cols) activeCol = cols > 0 ? cols - 1 : 0;
+    if (activeRow < 0) activeRow = 0;
+    if (activeCol < 0) activeCol = 0;
+}
+
+void App::undo()
+{
+    if (undoStack_.empty())
+        return;
+    abortInProgressEdit();
+    redoStack_.push_back(project.students);          // current -> redo
+    std::vector<gt::Student> prev = std::move(undoStack_.back());
+    undoStack_.pop_back();
+    const auto [r, c] = gt::firstGradingDiff(project.students, prev); // where it changed
+    project.students = std::move(prev);
+    undoBaseline_ = project.students;
+    undoPending_ = false;
+    dirty = true;                                    // file no longer matches disk
+    if (r >= 0) { activeRow = r; activeCol = c; }     // jump the selection to the change
+    clampActive();
+    gridScrollToActive = true;
+}
+
+void App::redo()
+{
+    if (redoStack_.empty())
+        return;
+    abortInProgressEdit();
+    undoStack_.push_back(project.students);          // current -> undo
+    std::vector<gt::Student> next = std::move(redoStack_.back());
+    redoStack_.pop_back();
+    const auto [r, c] = gt::firstGradingDiff(project.students, next);
+    project.students = std::move(next);
+    undoBaseline_ = project.students;
+    undoPending_ = false;
+    dirty = true;
+    if (r >= 0) { activeRow = r; activeCol = c; }
+    clampActive();
+    gridScrollToActive = true;
 }

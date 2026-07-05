@@ -30,6 +30,9 @@ toolchain and needs no external libraries installed.
   whole row automatically scores 0 and is greyed out.
 - **Live totals** — each student's `score / max` updates as you grade, plus a
   class summary (graded count, average, min, max) in the toolbar.
+- **Undo / redo** — every grading action (cell edits, full-marks, paint, no
+  submission) can be undone with **Ctrl+Z** and redone with **Ctrl+Y**; the grid
+  jumps to the cell that changed so you can see what was reverted.
 - **Question images** — click a question's column header to attach screenshots:
   the **question sheet** and **solution references** used to verify checks. Tag
   each image with the sub-question(s) it covers, and open previews in windows you
@@ -111,7 +114,11 @@ BODEX_DEMO=1 ./build/BodeX.exe
    full cell editor. Clicking a cell also moves the selection there, so mouse and
    keyboard mix freely.
 4. Click a **student ID** to mark *No submission* (row scores 0).
-5. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
+5. **Undo / redo.** **Ctrl+Z** undoes the last grading action, **Ctrl+Y** (or
+   **Ctrl+Shift+Z**) redoes it — also on the **Edit** menu. A whole right-drag paint
+   counts as one step, and the selection jumps to the reverted cell. History is
+   per-session and resets when you start, open, or close a project.
+6. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
    with unsaved changes prompts to Save / Discard / Cancel.
 
 Click a **question's column header** to open its image menu — add / preview /

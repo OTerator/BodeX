@@ -72,7 +72,22 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 **Data safety**
 - **Autosave + crash recovery** — periodic autosave to `<project>.autosave`
   (already git-ignored) and a restore prompt on next launch.
-- **Undo / redo** — an action stack for cell edits, full-ticks, paint, no-submission.
+- ~~**Undo / redo**~~ — **done:** a coalescing snapshot history over the grading
+  grid (`project.students`). **Ctrl+Z** / **Ctrl+Y** (also **Ctrl+Shift+Z**, and an
+  **Edit** menu). Driven off `markDirty()` — `App::maybeCommitUndo()` checkpoints at
+  end of frame once the action has *settled* (no paint drag, inline edit, or active
+  input), so a whole paint drag or a typed inline edit is **one** step. Undo/redo jump
+  the selection to the first changed cell. **Scope = grading data only:** question-image
+  add/remove marks the project dirty but leaves `students` unchanged, so the equality
+  guard skips it (previews stay valid too). In-memory only; reset on new/open/close.
+  See spec.md §8b.
+  - *Future — accurate dirty marker across undo.* `undo()`/`redo()` currently set
+    `dirty = true` unconditionally, so undoing back to the exact **last-saved** state
+    still shows the `*` (and the close prompt still asks to save) even though the grid
+    now matches disk. Purely cosmetic — no data risk. Fix: remember the history depth
+    at each successful `doSave()` (a "saved marker") and set `dirty = (depth !=
+    savedDepth)` in undo/redo instead. Fiddly edges: a mid-session save moves the
+    marker, and after crossing it the marker can sit on either the undo or redo side.
 
 **Analytics (data already collected)**
 - **Per-question stats** — average per question, hardest question, and
