@@ -81,7 +81,11 @@ mingw32-make clean    # remove build/
 - `BODEX_DEMO=1` → launch straight into a populated sample grid.
 - `BODEX_DEMO=2` → same, and open the cell editor on the first cell.
 - `BODEX_DEMO=3` → jump to the New Project screen.
-Handled in `App::App()` (`src/app/App.cpp`, `buildDemoProject()`).
+Handled in `App::App()` (`src/app/App.cpp`, `buildDemoProject()`). The demo cell's
+note is a Hebrew string, to exercise the BiDi note field (§9c).
+
+`BODEX_FOCUS_NOTE=1` focuses the note field when the cell editor opens (test aid only;
+lets scripted keystrokes land in the note — default UX still focuses grading).
 
 `BODEX_OPEN=<path>` opens a specific project on launch (used for "open with" and
 for GUI testing without clicking through the launcher).
@@ -119,6 +123,7 @@ src/
   ui/GradingTable.*      The grid: header, cells, totals, status bar, popups, and
                          the left-click/drag "paint full marks" gesture.
   ui/CellEditor.*        Cell editor popup + student (no-submission) menu popup.
+  ui/BidiInput.*         BiDi-aware WYSIWYG note field (Hebrew/RTL editing, §9c).
   ui/widgets.*           fmtNum(), greenTickCheckbox(), bigTitle(), the notes-font
                          push/pop + BiDi display helpers (noteVisual/noteIsRtl, §9c).
   ui/platform_dialogs.*  Native Win32 open/save file dialogs (commdlg).
@@ -605,10 +610,12 @@ in **non-modal windows** (`imagePreviewWindows`) that stay open beside the grid.
 
 ## 9c. Hebrew / bidirectional (BiDi) cell notes
 
-Cell **notes** support Hebrew and right-to-left text. Two hard facts shape the design:
-Dear ImGui has **no BiDi engine** (it draws/edits glyphs strictly left-to-right in
-memory order and `InputText` has no RTL mode), and the default ProggyClean font is
-ASCII-only. So the feature is three cooperating pieces:
+Cell **notes** are edited in a **BiDi-aware, WYSIWYG** field (`ui/BidiInput.*`):
+Hebrew flows right-to-left, English left-to-right, the field right-aligns in RTL, and
+paired punctuation mirrors correctly — all while typing. Two hard facts shape the
+design: Dear ImGui has **no BiDi engine** (it draws/edits glyphs strictly left-to-
+right in memory order and `InputText` has no RTL mode), and the default ProggyClean
+font is ASCII-only. So the feature is these cooperating pieces:
 
 - **Glyphs.** `main.cpp` keeps ProggyClean as the main UI font (`AddFontDefault`) and
   loads a scalable Hebrew-capable **system** font (Arial → Segoe UI → Tahoma, first
@@ -617,22 +624,29 @@ ASCII-only. So the feature is three cooperating pieces:
   `gt::ui::pushNotesFont()`/`popNotesFont()` (a null font — missing file — just keeps
   the current font, so it degrades to glyph-less without crashing). The rest of the
   UI is untouched, so the ASCII-chrome rule (§10/§13) still holds.
-- **Reorder.** `model/Bidi.{h,cpp}` is a **reduced Unicode BiDi Algorithm** (UAX #9)
-  sufficient for Hebrew (strong L/R + basic AL, European/Arabic numbers, neutrals; no
-  explicit embeddings, no Arabic shaping). `bidiReorder(logical, base)` returns the
-  visual codepoint order plus logical↔visual index maps; `bidiVisualUtf8` is the
-  UTF-8 convenience wrapper. Newlines are hard separators (each line reorders
-  independently). GUI-free and **unit-tested** (`testBidi` — pure Hebrew reverses,
-  numbers keep LTR order inside an RTL run, mixed Latin/Hebrew, etc.).
-- **Direction + display.** `Cell::noteDir` (`TextDir{Auto,LTR,RTL}`, §5, serialized
-  §7) is the base-direction override; `Auto` derives it from the first strong char.
-  In the CellEditor, **Ctrl+Left-Shift = LTR / Ctrl+Right-Shift = RTL** (the Windows
-  convention) sets it while the note field is focused. **Editing stays logical-order**
-  (ImGui limitation) but a live **BiDi preview** below the field — and the grid
-  hover **tooltip** — render `gt::ui::noteVisual(note, dir)` (right-aligned when
-  `noteIsRtl`) so short Hebrew notes read correctly. A fully visual-order editable
-  widget (mapping caret/selection through the index maps) is the parked Phase-2 step
-  (NOTES.md); the maps already exist in `BidiResult` for it.
+- **Reorder + mirror.** `model/Bidi.{h,cpp}` is a **reduced Unicode BiDi Algorithm**
+  (UAX #9) sufficient for Hebrew (strong L/R + basic AL, European/Arabic numbers,
+  neutrals; no explicit embeddings, no Arabic shaping). `bidiReorder(logical, base)`
+  returns the visual codepoints, logical↔visual index maps, and a per-visual-glyph
+  `visualRtl` flag; glyphs at RTL levels are **mirrored** (`bidiMirror`: `()[]{}<>«»`)
+  in the visual copy only — so a typed `(` is *stored* as `(` and merely *drawn* as
+  `)` in RTL. `bidiVisualUtf8` is the UTF-8 convenience wrapper. Newlines are hard
+  separators. GUI-free and **unit-tested** (`testBidi` — pure Hebrew reverses, numbers
+  keep LTR inside RTL, a mirrored-bracket case, `visualRtl` flags, etc.).
+- **The editable widget.** `gt::ui::bidiNoteInput` wraps a real `ImGui::InputText`
+  (single-line) so ImGui's mature engine does all editing on the logical UTF-8 buffer
+  (insert, delete, selection, clipboard, IME, undo). It pushes `ImGuiCol_Text`,
+  `ImGuiCol_InputTextCursor` and `ImGuiCol_TextSelectedBg` to **alpha 0** to hide
+  ImGui's own rendering, uses `ImGuiInputTextFlags_CallbackAlways` to read/**write**
+  the cursor (byte offsets), and repaints the text/caret/selection itself in visual
+  order (notes font), right-aligned in RTL, with horizontal scroll. Mouse clicks
+  hit-test the visual layout and override the cursor via the callback; plain Left/Right
+  move the caret by **screen direction**. Polish: an `Auto/LTR/RTL` control + resolved-
+  direction indicator, a placeholder, and an in-field clear (×). **Invariant:** the
+  widget never writes the buffer except through ImGui's editor, so notes round-trip to
+  disk exactly as typed. `Cell::noteDir` (`TextDir{Auto,LTR,RTL}`, §5/§7) is the base-
+  direction override, toggled with **Ctrl+Left-Shift / Ctrl+Right-Shift** while focused
+  (`Auto` = first strong char). The grid hover **tooltip** reuses `gt::ui::noteVisual`.
 
 ## 10. ImGui 1.92 specifics & gotchas
 

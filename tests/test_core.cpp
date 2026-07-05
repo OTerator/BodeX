@@ -655,6 +655,30 @@ static void testBidi()
         CHECK(r.visual[2] == '\n');                  // separator fixed
         CHECK(r.visual[3] == 'a' && r.visual[4] == 'b'); // line 2 (LTR run) kept
     }
+    // Mirroring: paired punctuation flips glyph inside an RTL run, but only the
+    // display copy — logical order/text is untouched. "(A)" with RTL base reorders
+    // to ")A(" by position, then both parens mirror, giving a correctly-oriented
+    // "(A)" (without mirroring it would read ")A(").
+    {
+        gt::BidiResult r = gt::bidiReorder(u32({'(', A, ')'}), BaseDir::RTL);
+        CHECK(r.visual == u32({'(', A, ')'}));
+        CHECK(r.visualRtl.size() == 3);
+        CHECK(r.visualRtl[0] == 1 && r.visualRtl[1] == 1 && r.visualRtl[2] == 1);
+        CHECK(gt::bidiMirror(U'(') == U')' && gt::bidiMirror(U'>') == U'<');
+        CHECK(gt::bidiMirror(U'a') == U'a'); // no mirror -> unchanged
+    }
+    // LTR brackets are NOT mirrored, and visualRtl flags each glyph's level.
+    {
+        gt::BidiResult r = gt::bidiReorder(u32({'(', 'a', ')'}), BaseDir::LTR);
+        CHECK(r.visual == u32({'(', 'a', ')'}));   // untouched under LTR base
+        CHECK(r.visualRtl[0] == 0 && r.visualRtl[1] == 0 && r.visualRtl[2] == 0);
+    }
+    // Mixed run flags direction per glyph: "aA" (Latin, Hebrew) LTR base.
+    {
+        gt::BidiResult r = gt::bidiReorder(u32({'a', A}), BaseDir::LTR);
+        CHECK(r.visual == u32({'a', A}));
+        CHECK(r.visualRtl[0] == 0 && r.visualRtl[1] == 1);
+    }
     // Empty string is a no-op.
     {
         gt::BidiResult r = gt::bidiReorder(std::u32string(), BaseDir::Auto);

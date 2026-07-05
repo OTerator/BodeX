@@ -129,11 +129,13 @@ BODEX_DEMO=1 ./build/BodeX.exe
    closes unexpectedly, the next launch offers to **recover** it. Autosave is a safety
    net only — your `.json` is still written by Save.
 
-**Notes can be Hebrew (right-to-left).** Type a note in any language; a note reads
-correctly right-to-left when it starts with Hebrew, and inside the cell editor
-**Ctrl+Left-Shift** forces left-to-right / **Ctrl+Right-Shift** forces right-to-left
-(the usual Windows convention). A live preview under the note box shows exactly how
-it will read, and the note appears the same way in the grid's hover tooltip.
+**Notes can be Hebrew (right-to-left).** The note field is bidirectional: Hebrew you
+type flows right-to-left and English left-to-right, the field right-aligns for Hebrew,
+and brackets/parentheses face the right way in RTL — what you type is exactly what is
+stored. Direction is automatic (from the first letter); **Ctrl+Left-Shift** forces
+left-to-right and **Ctrl+Right-Shift** forces right-to-left (the usual Windows
+convention), and an `Auto / LTR / RTL` control sits under the field. The note reads
+the same way in the grid's hover tooltip.
 
 Click a **question's column header** to open its image menu — add / preview /
 remove the question sheet and solution-reference screenshots, each tagged to the

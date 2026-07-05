@@ -62,8 +62,11 @@ bool isNeutral(Bc t)     { return t == B || t == S || t == WS || t == ON || t ==
 Bc strongDir(Bc t) { return (t == L) ? L : R; } // t in {L,R,EN,AN} here -> R for the rest
 
 // Reorder one line [lo,hi) (no newlines) into visual order; returns global logical
-// indices (lo-based) in left-to-right drawing order.
-std::vector<int> reorderLine(const std::u32string& logical, int lo, int hi, bool baseRtl)
+// indices (lo-based) in left-to-right drawing order. `outRtl` is appended in lockstep
+// with the return value: 1 where the resolved level of that visual glyph is odd (RTL),
+// used by callers for mirroring and caret-side geometry.
+std::vector<int> reorderLine(const std::u32string& logical, int lo, int hi, bool baseRtl,
+                             std::vector<char>& outRtl)
 {
     const int len = hi - lo;
     std::vector<int> out;
@@ -173,7 +176,10 @@ std::vector<int> reorderLine(const std::u32string& logical, int lo, int hi, bool
     }
 
     out.reserve(len);
-    for (int k = 0; k < len; ++k) out.push_back(lo + vis[k]);
+    for (int k = 0; k < len; ++k) {
+        out.push_back(lo + vis[k]);
+        outRtl.push_back((level[vis[k]] & 1) ? 1 : 0);
+    }
     return out;
 }
 
@@ -230,6 +236,18 @@ std::string codepointsToUtf8(const std::u32string& cps)
     return out;
 }
 
+char32_t bidiMirror(char32_t c)
+{
+    switch (c) {
+        case U'(': return U')';   case U')': return U'(';
+        case U'[': return U']';   case U']': return U'[';
+        case U'{': return U'}';   case U'}': return U'{';
+        case U'<': return U'>';   case U'>': return U'<';
+        case 0x00AB: return 0x00BB; case 0x00BB: return 0x00AB; // guillemets « »
+        default: return c;
+    }
+}
+
 // Base direction over the whole text: first strong char (P2/P3), unless forced.
 static bool computeBaseRtl(const std::u32string& logical, BaseDir base)
 {
@@ -250,23 +268,30 @@ BidiResult bidiReorder(const std::u32string& logical, BaseDir base)
     res.baseRtl = computeBaseRtl(logical, base);
     res.logicalToVisual.assign(n, 0);
 
-    std::vector<int> order;
+    std::vector<int>  order;      // visual -> logical index
+    std::vector<char> orderRtl;   // visual -> 1 if RTL level (lockstep with `order`)
     order.reserve(n);
+    orderRtl.reserve(n);
     int i = 0;
     while (i < n) {
         int j = i;
         while (j < n && logical[j] != U'\n') ++j;
-        std::vector<int> seg = reorderLine(logical, i, j, res.baseRtl);
+        std::vector<int> seg = reorderLine(logical, i, j, res.baseRtl, orderRtl);
         for (int idx : seg) order.push_back(idx);
-        if (j < n) order.push_back(j); // the newline keeps its place
+        if (j < n) { order.push_back(j); orderRtl.push_back(res.baseRtl ? 1 : 0); } // newline keeps its place
         i = (j < n) ? j + 1 : j;
     }
 
     res.visualToLogical = order;
     res.visual.resize(order.size());
+    res.visualRtl.assign(order.size(), 0);
     for (int v = 0; v < static_cast<int>(order.size()); ++v) {
-        res.visual[v] = logical[order[v]];
-        res.logicalToVisual[order[v]] = v;
+        const int      li  = order[v];
+        const bool     rtl = orderRtl[v] != 0;
+        const char32_t cp  = logical[li];
+        res.visual[v]    = rtl ? bidiMirror(cp) : cp; // mirror paired glyphs in RTL runs
+        res.visualRtl[v] = rtl ? 1 : 0;
+        res.logicalToVisual[li] = v;
     }
     return res;
 }

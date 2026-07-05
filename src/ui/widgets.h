@@ -29,10 +29,9 @@ ImFont* notesFont();
 void    pushNotesFont();
 void    popNotesFont();
 
-// BiDi display helpers for cell notes: reorder logical (as-typed) text into visual
-// (as-drawn) order for the given direction, and report whether it reads right-to-
-// left (for alignment). Pair with pushNotesFont() when drawing the result.
+// Reorder a note's logical (as-typed) text into visual (as-drawn) order for the
+// given direction — used for read-only display (the grid hover tooltip). Pair with
+// pushNotesFont() when drawing the result.
 std::string noteVisual(const std::string& logicalUtf8, gt::TextDir dir);
-bool        noteIsRtl (const std::string& logicalUtf8, gt::TextDir dir);
 
 } // namespace gt::ui

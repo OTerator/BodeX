@@ -64,9 +64,4 @@ std::string noteVisual(const std::string& logicalUtf8, gt::TextDir dir)
     return gt::bidiVisualUtf8(logicalUtf8, baseDirOf(dir));
 }
 
-bool noteIsRtl(const std::string& logicalUtf8, gt::TextDir dir)
-{
-    return gt::bidiBaseIsRtl(logicalUtf8, baseDirOf(dir));
-}
-
 } // namespace gt::ui

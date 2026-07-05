@@ -22,11 +22,19 @@ namespace gt {
 enum class BaseDir { Auto, LTR, RTL };
 
 struct BidiResult {
-    std::u32string   visual;          // codepoints in visual (drawing) order
-    std::vector<int> visualToLogical; // size == visual.size(); logical index of each
-    std::vector<int> logicalToVisual; // size == logical.size(); visual index of each
-    bool             baseRtl = false; // resolved base direction (for alignment)
+    std::u32string    visual;          // codepoints in visual (drawing) order, with
+                                       // paired punctuation mirrored inside RTL runs
+    std::vector<int>  visualToLogical; // size == visual.size(); logical index of each
+    std::vector<int>  logicalToVisual; // size == logical.size(); visual index of each
+    std::vector<char> visualRtl;       // size == visual.size(); 1 = glyph is RTL level
+    bool              baseRtl = false; // resolved base direction (for alignment)
 };
+
+// Display mirror for paired punctuation in an RTL run: '(' <-> ')', '[' <-> ']',
+// '{' <-> '}', '<' <-> '>', guillemets. Returns the input unchanged if it has no
+// mirror. Applied to the *display* copy only (never to stored/logical text), so a
+// typed '(' is stored as '(' and merely drawn as ')' when it lands in RTL context.
+char32_t bidiMirror(char32_t c);
 
 // Reorder logical -> visual. Newlines ('\n') are hard separators: each line is
 // reordered independently and the newline keeps its logical position.

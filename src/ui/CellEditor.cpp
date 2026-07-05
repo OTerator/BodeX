@@ -2,11 +2,13 @@
 
 #include "app/App.h"
 #include "ui/widgets.h"
+#include "ui/BidiInput.h"
 #include "model/Scoring.h"
 #include "imgui.h"
 #include "imgui_stdlib.h"
 
 #include <cstdio>
+#include <cstdlib>
 
 namespace gt::ui {
 
@@ -140,36 +142,18 @@ void cellEditorPopup(App& app)
         c.touched = true;
         app.markDirty();
     }
-    // Note (Hebrew / RTL aware). Editing runs in logical order — ImGui's InputText
-    // has no RTL mode — under the Hebrew-capable notes font so glyphs render. The
-    // Ctrl+Left-Shift / Ctrl+Right-Shift toggle sets the base direction (Windows
-    // convention) while the field is focused, and the live preview below shows how
-    // the note will read (visual order, right-aligned when RTL).
-    pushNotesFont();
-    const bool noteChanged = ImGui::InputTextMultiline("Note", &c.note, ImVec2(280, 56));
-    popNotesFont();
-    const bool noteActive = ImGui::IsItemActive();
-    if (noteChanged) { c.touched = true; app.markDirty(); }
-
-    if (noteActive && ImGui::GetIO().KeyCtrl) {
-        if (ImGui::IsKeyPressed(ImGuiKey_LeftShift, false))  { c.noteDir = gt::TextDir::LTR; app.markDirty(); }
-        if (ImGui::IsKeyPressed(ImGuiKey_RightShift, false)) { c.noteDir = gt::TextDir::RTL; app.markDirty(); }
-    }
-
-    const char* dirLabel = (c.noteDir == gt::TextDir::LTR) ? "LTR"
-                         : (c.noteDir == gt::TextDir::RTL) ? "RTL" : "auto";
-    ImGui::TextDisabled("note dir: %s   (Ctrl+Shift:  L = left-to-right,  R = right-to-left)", dirLabel);
-    if (!c.note.empty()) {
-        const std::string vis = gt::ui::noteVisual(c.note, c.noteDir);
-        const bool rtl = gt::ui::noteIsRtl(c.note, c.noteDir);
-        pushNotesFont();
-        if (rtl) {
-            const float avail = ImGui::GetContentRegionAvail().x;
-            const float tw = ImGui::CalcTextSize(vis.c_str()).x;
-            if (tw < avail) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - tw));
-        }
-        ImGui::TextUnformatted(vis.c_str());
-        popNotesFont();
+    // Note (Hebrew / RTL aware) — the bidiNoteInput widget (ui/BidiInput.*) reuses
+    // ImGui's editing engine but repaints in BiDi visual order: Hebrew flows right-to-
+    // left, English left-to-right, paired punctuation mirrors in RTL runs, and the base
+    // direction toggles with Ctrl+Left/Right-Shift. Stored text is exactly what's typed.
+    ImGui::TextUnformatted("Note");
+    // Test aid only: BODEX_FOCUS_NOTE focuses the note field when the editor opens,
+    // so scripted keystroke tests land in the note (default UX still focuses grading).
+    static const bool kFocusNote = [] { const char* e = std::getenv("BODEX_FOCUS_NOTE"); return e && *e && *e != '0'; }();
+    if (kFocusNote && ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    if (gt::ui::bidiNoteInput("##note", c.note, c.noteDir, 280.0f)) {
+        c.touched = true;
+        app.markDirty();
     }
 
     ImGui::Separator();

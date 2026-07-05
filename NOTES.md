@@ -128,19 +128,17 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 - **Roster import (IDs → names)** from CSV, shown in the ID column and exports.
 - **Reusable deduction/comment snippets (rubric)** applied per sub-question for
   consistency and speed.
-- ~~**Hebrew / RTL cell notes**~~ — **done (Phase 1):** a self-contained reduced
-  Unicode BiDi engine (`model/Bidi.*`, unit-tested) reorders logical→visual so
-  Hebrew (and mixed Hebrew/Latin/numbers) reads correctly; a Hebrew-capable system
-  font is loaded for the note widgets only; `Cell::noteDir` (`Auto`/LTR/RTL) is
-  toggled with the Windows-standard **Ctrl+Left-Shift / Ctrl+Right-Shift**; the grid
-  tooltip and a live CellEditor **preview** show visual order (right-aligned when
-  RTL). spec.md §9c.
-  - *Future — Phase 2 (custom RTL editor):* editing still runs in ImGui's
-    logical-order `InputText` (no RTL caret/selection). A visual-order editable note
-    widget would map caret/mouse through the `BidiResult` logical↔visual index maps
-    (already produced by `bidiReorder`) and handle input/backspace/selection itself.
-    Sizeable — reimplements a chunk of `InputText`; weigh against how long grading
-    notes really get.
+- ~~**Hebrew / RTL cell notes**~~ — **done:** a self-contained reduced Unicode BiDi
+  engine (`model/Bidi.*`, unit-tested) reorders logical→visual (mirroring paired
+  punctuation in RTL runs) and a **WYSIWYG editable** note field (`ui/BidiInput.*`)
+  types Hebrew right-to-left / English left-to-right, right-aligns in RTL, and toggles
+  base direction with **Ctrl+Left/Right-Shift**. It wraps ImGui's own `InputText`
+  (transparent-rendered, driven via `CallbackAlways`) so all editing/clipboard/undo is
+  ImGui's on the logical buffer — stored text is exactly what's typed. spec.md §9c.
+  - *Future polish:* shift+arrow **visual** selection extension (plain visual arrows
+    done; Shift+arrow still falls back to logical); **multi-line** BiDi notes (the
+    field is single-line — multi-line needs per-wrapped-line reordering); word-level
+    double-click select in visual order (currently ImGui's logical best-effort).
 
 **Settings & display**
 - **Settings menu** — promote the scattered settings notes into one first-class
