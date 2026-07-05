@@ -81,6 +81,16 @@ std::string projectsDir()
     return wide_to_utf8(dir);
 }
 
+std::string autosaveDir()
+{
+    std::wstring base = appDataBaseW();
+    if (base.empty())
+        return std::string();
+    std::wstring dir = base + L"\\autosave";
+    ::CreateDirectoryW(dir.c_str(), nullptr);
+    return wide_to_utf8(dir);
+}
+
 std::string configFilePath()
 {
     std::wstring base = appDataBaseW();
@@ -97,6 +107,57 @@ bool fileExists(const std::string& path)
     return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
 }
 
+bool removeFile(const std::string& path)
+{
+    if (path.empty())
+        return false;
+    return ::DeleteFileW(utf8_to_wide(path).c_str()) != 0;
+}
+
+std::string configToJsonString(const AppConfig& cfg)
+{
+    json root;
+    root["recentProjects"] = cfg.recentProjects;
+    if (!cfg.autosave.empty()) {
+        root["autosave"] = {
+            {"file",        cfg.autosave.file},
+            {"projectPath", cfg.autosave.projectPath},
+            {"name",        cfg.autosave.name},
+            {"savedIso",    cfg.autosave.savedIso},
+        };
+    }
+    return root.dump(2);
+}
+
+bool configFromJsonString(const std::string& text, AppConfig& out)
+{
+    out = AppConfig{};
+    try {
+        json root = json::parse(text);
+        if (root.contains("recentProjects") && root.at("recentProjects").is_array()) {
+            for (const auto& jp : root.at("recentProjects")) {
+                if (jp.is_string())
+                    out.recentProjects.push_back(jp.get<std::string>());
+            }
+        }
+        if (root.contains("autosave") && root.at("autosave").is_object()) {
+            const json& a = root.at("autosave");
+            auto str = [&](const char* k) -> std::string {
+                return (a.contains(k) && a.at(k).is_string()) ? a.at(k).get<std::string>()
+                                                              : std::string();
+            };
+            out.autosave.file        = str("file");
+            out.autosave.projectPath = str("projectPath");
+            out.autosave.name        = str("name");
+            out.autosave.savedIso    = str("savedIso");
+        }
+    } catch (const std::exception&) {
+        out = AppConfig{}; // corrupt config -> start clean
+        return false;
+    }
+    return true;
+}
+
 AppConfig loadConfig()
 {
     AppConfig cfg;
@@ -108,21 +169,17 @@ AppConfig loadConfig()
     if (!readFile(utf8_to_wide(cfgPath), text) || text.empty())
         return cfg;
 
-    try {
-        json root = json::parse(text);
-        if (root.contains("recentProjects") && root.at("recentProjects").is_array()) {
-            for (const auto& jp : root.at("recentProjects")) {
-                if (!jp.is_string())
-                    continue;
-                std::string p = jp.get<std::string>();
-                if (fileExists(p)) // drop entries whose file has since moved/been deleted
-                    cfg.recentProjects.push_back(p);
-            }
-        }
-    } catch (const std::exception&) {
-        // Corrupt config -> start clean.
-        cfg.recentProjects.clear();
-    }
+    configFromJsonString(text, cfg); // tolerant; leaves cfg default on parse error
+
+    // Drop recent entries whose file has since moved/been deleted.
+    auto& v = cfg.recentProjects;
+    v.erase(std::remove_if(v.begin(), v.end(),
+                           [](const std::string& p) { return !fileExists(p); }),
+            v.end());
+    // A pending autosave whose file is gone can no longer be recovered -> forget it.
+    if (!cfg.autosave.empty() && !fileExists(cfg.autosave.file))
+        cfg.autosave = AutosaveRecord{};
+
     return cfg;
 }
 
@@ -131,8 +188,7 @@ void saveConfig(const AppConfig& cfg)
     std::string cfgPath = configFilePath();
     if (cfgPath.empty())
         return;
-    json root{ {"recentProjects", cfg.recentProjects} };
-    writeFile(utf8_to_wide(cfgPath), root.dump(2));
+    writeFile(utf8_to_wide(cfgPath), configToJsonString(cfg));
 }
 
 void addRecentProject(AppConfig& cfg, const std::string& path)

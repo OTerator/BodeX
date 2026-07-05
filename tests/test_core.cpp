@@ -226,6 +226,50 @@ static void testRecentAliasSafe()
     CHECK(cfg.recentProjects[0] == "d.json");
 }
 
+// Config <-> JSON string round-trip, incl. the crash-recovery autosave record.
+// Pure (no filesystem), so it exercises the serialization of the new field.
+static void testConfigRoundTrip()
+{
+    // Populated: recents + an autosave record survive a round-trip verbatim.
+    AppConfig cfg;
+    cfg.recentProjects = { "a.json", "b.json" };
+    cfg.autosave = { "C:\\aut\\deadbeef.autosave", "C:\\proj\\Exam.json",
+                     "Midterm", "2026-07-05 14:32" };
+
+    AppConfig r;
+    CHECK(configFromJsonString(configToJsonString(cfg), r));
+    CHECK(r.recentProjects.size() == 2);
+    CHECK(r.recentProjects[0] == "a.json");
+    CHECK(!r.autosave.empty());
+    CHECK(r.autosave.file == "C:\\aut\\deadbeef.autosave");
+    CHECK(r.autosave.projectPath == "C:\\proj\\Exam.json");
+    CHECK(r.autosave.name == "Midterm");
+    CHECK(r.autosave.savedIso == "2026-07-05 14:32");
+
+    // Empty record: no "autosave" key is written, and it round-trips as empty.
+    AppConfig none;
+    none.recentProjects = { "x.json" };
+    const std::string js = configToJsonString(none);
+    CHECK(js.find("autosave") == std::string::npos);
+    AppConfig r2;
+    CHECK(configFromJsonString(js, r2));
+    CHECK(r2.autosave.empty());
+    CHECK(r2.recentProjects.size() == 1);
+
+    // An old config with no "autosave" key parses to an empty record (not an error).
+    AppConfig r3;
+    CHECK(configFromJsonString("{ \"recentProjects\": [\"only.json\"] }", r3));
+    CHECK(r3.autosave.empty());
+    CHECK(r3.recentProjects.size() == 1);
+
+    // Corrupt JSON -> false, and the out-config is reset to defaults.
+    AppConfig r4;
+    r4.recentProjects = { "stale.json" };
+    CHECK(!configFromJsonString("{ not json", r4));
+    CHECK(r4.recentProjects.empty());
+    CHECK(r4.autosave.empty());
+}
+
 // Skipped sub-questions lock out their points: they cap awarded and lower the
 // awardable max. Equal split uses the answered count; Custom uses per-sub ticks.
 static void testSubQuestionDeduction()
@@ -548,6 +592,7 @@ int main()
     testImagesRoundTrip();
     testMalformedJson();
     testRecentAliasSafe();
+    testConfigRoundTrip();
     testSubQuestionDeduction();
     testEditorAdjust();
     testEditorFirstInteractionSync();

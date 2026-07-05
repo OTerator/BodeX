@@ -86,6 +86,9 @@ Handled in `App::App()` (`src/app/App.cpp`, `buildDemoProject()`).
 `BODEX_OPEN=<path>` opens a specific project on launch (used for "open with" and
 for GUI testing without clicking through the launcher).
 
+`BODEX_AUTOSAVE_SEC=<seconds>` overrides the 30 s autosave interval (§8c) — set it
+low (e.g. `2`) to exercise autosave / crash-recovery quickly during GUI testing.
+
 **Desktop shortcut:** `tools/create_shortcut.ps1` creates/refreshes
 `Desktop\BodeX.lnk` (icon from `resources/BodeX.ico`, target `build/BodeX.exe`,
 triggers a shell icon-cache refresh).
@@ -277,10 +280,17 @@ Per-cell effective points, **highest precedence first**:
   all-answered (`subAnswered = subCount`, `subChecks` cleared) so no old grade is
   retro-deducted — **scores are preserved**, the stale reference counts are dropped.
   Bump `schemaVersion` and add a migration branch here for any future breaking change.
-- Config: `%APPDATA%\BodeX\config.json` holds the recent-projects list;
-  `%APPDATA%\BodeX\projects\` is the suggested (not enforced) save dir.
-  `AppConfig` resolves these via `SHGetFolderPathW(CSIDL_APPDATA)` and creates
-  them on demand. `loadConfig` filters out recents whose file no longer exists.
+- Config: `%APPDATA%\BodeX\config.json` holds the recent-projects list **and the
+  pending-autosave record** (`AutosaveRecord`, §8c); `%APPDATA%\BodeX\projects\` is
+  the suggested (not enforced) save dir and `%APPDATA%\BodeX\autosave\` holds the
+  crash-recovery files. `AppConfig` resolves these via
+  `SHGetFolderPathW(CSIDL_APPDATA)` and creates them on demand (`appDataDir`,
+  `projectsDir`, `autosaveDir`). `loadConfig` filters out recents whose file no longer
+  exists **and** drops the autosave record if its file is gone. The `config <-> JSON`
+  mapping is factored into pure, unit-tested helpers `configToJsonString` /
+  `configFromJsonString` (mirroring `Serialization`'s split); `save/loadConfig` layer
+  file I/O over them. `removeFile` (Win32 `DeleteFileW`) is the model layer's file
+  delete (used to clean up a spent autosave).
 - **`addRecentProject` copies its argument first** — do not remove that copy. The
   Home screen used to pass a reference *into* `config.recentProjects`, and the
   erase/insert invalidated it (use-after-free crash on opening a recent). The Home
@@ -372,6 +382,53 @@ every wholesale project swap (`createProjectFromDraft`, `applyLoadedProject`,
 `markDirty()` and writes into `project.students`. A future edit that mutates
 `project.questions` at grading time would need its own handling (or would ride along
 only if the snapshot type widened to the whole `Project`).
+
+---
+
+## 8c. Autosave & crash recovery (`App.cpp`)
+
+**Crash insurance, never a replacement for Save.** While a project has unsaved edits,
+a full JSON copy is written to `%APPDATA%\BodeX\autosave\<project.id>.autosave`. The
+autosave never touches the user's `.json` — an explicit Save is still the durable copy
+(and, being durable, *deletes* the autosave). It also does not touch image assets:
+files are addressed by id/path and copied only on real Save (§9b), so serializing the
+project JSON is sufficient.
+
+**Location — central appdata folder, keyed by `project.id`.** Both saved and
+never-saved projects autosave to the same `autosaveDir()` file, named by the id (which
+round-trips through JSON, so the path is **stable across Save / Save As**). This
+mirrors the image `staging\<id>` dir (§9b), keeps the user's own folders free of stray
+sidecar files, and makes launch-time discovery a single-folder concern. (An id-less
+very-old file gets one assigned lazily in `autosaveTarget()`.)
+
+**Cadence — 30 s interval, settled, plus two flushes.** `maybeAutosave()` runs at the
+end of `render()` right after `maybeCommitUndo()` and shares its **settle gate**
+(`!paintActive && !gridEditing && !gridEditPageActive && !IsAnyItemActive()`), so it
+never writes mid-drag / mid-inline-edit; it is rate-limited by
+`ImGui::GetTime() - lastAutosave_ >= autosaveInterval_` (default 30 s,
+`BODEX_AUTOSAVE_SEC` overrides — §3). Per-change saving is deliberately avoided:
+`saveProject` re-serializes the whole file synchronously on the UI thread, so
+per-change writes would hitch the frame. Two **immediate** flushes capture the tail:
+`flushAutosave()` on **focus-loss** (`WM_ACTIVATEAPP` FALSE → `g_appDeactivated` →
+`app.flushAutosave()` in the `main.cpp` loop) and at the top of `requestQuit()` before
+the close/quit guard.
+
+**The config record is the crash marker.** `writeAutosave()` records
+`config.autosave = { file, projectPath, name, savedIso }` (`AutosaveRecord`, §7) and
+`saveConfig`s it. Every **clean** transition calls `clearAutosave()` — which deletes
+the *recorded* file (so a Save-As move still cleans the right one) and clears the
+record: successful `doSave()`, `closeProject()`, the start of `createProjectFromDraft`
+/ `applyLoadedProject`, and the `Pending::Quit` path (covers Discard→Quit). So a record
+that **survives to the next launch means the last session didn't exit cleanly**.
+
+**Recovery prompt.** `App::App()` arms `openRestorePopup_` when it lands on Home with
+no project and `config.autosave` still points at an existing file. `renderRestorePrompt()`
+(a root-level `BeginPopupModal("Recover Unsaved Work")`, mirroring `renderUnsavedPrompt`'s
+deferred-open id-stack trick, §8) offers **Restore** → `restoreFromAutosave()` (loads the
+file, adopts it like `applyLoadedProject` but sets `projectPath` from the record — may be
+`""` for a never-saved project — marks it `dirty`, and **keeps** the record so the next
+tick overwrites the same file) or **Discard** → `clearAutosave()`. The BODEX_DEMO project
+sets `demoMode_` and is never autosaved (so it can't fabricate a recovery prompt).
 
 ---
 
@@ -578,10 +635,11 @@ in **non-modal windows** (`imagePreviewWindows`) that stay open beside the grid.
 
 ## 12. Verifying changes (do this, don't just build)
 
-- **Core logic:** `mingw32-make test` (173 checks: scoring rules incl. sub-question
+- **Core logic:** `mingw32-make test` (191 checks: scoring rules incl. sub-question
   sync, one-press `stepAwarded`, and `isFullMarks`, JSON string + on-disk round-trip,
-  recent-alias regression, plus `Cell`/`Student` `operator==` and `firstGradingDiff`
-  for the undo history — §8b). Add cases when you touch model, scoring, or serialization.
+  recent-alias regression, `config <-> JSON` round-trip incl. the autosave record (§8c),
+  plus `Cell`/`Student` `operator==` and `firstGradingDiff` for the undo history — §8b).
+  Add cases when you touch model, scoring, or serialization.
 - **It builds:** `mingw32-make` with no warnings.
 - **GUI, visually:** the app is a real Win32 window; verify by screenshot. Launch
   with a demo mode and capture with **PrintWindow** (not screen-copy — a background

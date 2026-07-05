@@ -24,6 +24,9 @@ static ID3D11RenderTargetView* g_mainRenderTargetView = nullptr;
 // Set when the user clicks the window's close box; routed to App so the
 // unsaved-changes guard runs instead of the window closing immediately.
 static bool                    g_closeRequested = false;
+// Set when the app loses foreground activation (alt-tab away); routed to App so
+// it can flush a pending autosave immediately rather than waiting for the tick.
+static bool                    g_appDeactivated = false;
 
 // ---- forward decls --------------------------------------------------------
 static bool CreateDeviceD3D(HWND hWnd);
@@ -134,6 +137,12 @@ int main(int, char**)
             app.requestQuit();
         }
 
+        // Losing foreground activation flushes a pending autosave immediately.
+        if (g_appDeactivated) {
+            g_appDeactivated = false;
+            app.flushAutosave();
+        }
+
         ImGui::Render();
         const float clear[4] = { clear_color.x, clear_color.y, clear_color.z, clear_color.w };
         g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
@@ -241,6 +250,12 @@ static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         // Defer to the app's unsaved-changes guard rather than closing now.
         g_closeRequested = true;
         return 0;
+    case WM_ACTIVATEAPP:
+        // wParam == FALSE: another app took the foreground -> flush any autosave.
+        // Fall through to DefWindowProc so default activation handling still runs.
+        if (wParam == FALSE)
+            g_appDeactivated = true;
+        break;
     case WM_DESTROY:
         ::PostQuitMessage(0);
         return 0;

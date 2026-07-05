@@ -41,6 +41,8 @@ toolchain and needs no external libraries installed.
   into an assets folder beside the project so they travel with it.
 - **Saved as JSON** — one `.json` file per project; reopen it any time. Recent
   projects are remembered.
+- **Autosave & crash recovery** — unsaved edits are quietly autosaved every ~30s; if
+  BodeX ever closes unexpectedly, the next launch offers to recover the work.
 
 Scoring precedence per cell: *no-submission* (row → 0) → *green tick* (→ full
 points) → *awarded* (clamped to `[0, effective max]`, where the effective max is
@@ -119,7 +121,10 @@ BODEX_DEMO=1 ./build/BodeX.exe
    counts as one step, and the selection jumps to the reverted cell. History is
    per-session and resets when you start, open, or close a project.
 6. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
-   with unsaved changes prompts to Save / Discard / Cancel.
+   with unsaved changes prompts to Save / Discard / Cancel. In between saves, unsaved
+   work is **autosaved** every ~30s (and when you switch away or quit); if BodeX
+   closes unexpectedly, the next launch offers to **recover** it. Autosave is a safety
+   net only — your `.json` is still written by Save.
 
 Click a **question's column header** to open its image menu — add / preview /
 remove the question sheet and solution-reference screenshots, each tagged to the

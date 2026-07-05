@@ -123,6 +123,7 @@ public:
     bool doSaveAs();                                 // native save dialog -> save
     void closeProject();                             // guarded return to Home
     void requestQuit();                              // guarded quit
+    void flushAutosave();                            // write the pending autosave now (focus-loss / close)
     void markDirty() { dirty = true; undoPending_ = true; } // also arms an undo checkpoint
 
     // ---- undo / redo (grading edits only; see App.cpp) ----
@@ -145,6 +146,22 @@ private:
     void resetHistory();        // clear stacks + reseed baseline (new/open/close)
     void abortInProgressEdit(); // cancel any inline edit / paint gesture before a restore
     void clampActive();         // keep activeRow/activeCol inside the grid
+
+    // ---- autosave / crash recovery (see App.cpp §autosave) ----
+    // Periodic crash-insurance writes to %APPDATA%\BodeX\autosave\<project.id>.autosave.
+    // The config keeps a record pointing at the live file; it is deleted on every
+    // clean exit, so a record that survives to the next launch means the last session
+    // crashed and we offer to recover it.
+    std::string autosaveTarget();   // the autosave path for the current project
+    void maybeAutosave();           // end-of-frame: rate-limited write once the action has settled
+    void writeAutosave();           // force-write the file + refresh the config record
+    void clearAutosave();           // delete the recorded file + clear the record (clean exit)
+    void restoreFromAutosave();     // adopt config.autosave's file as the live project
+    void renderRestorePrompt();     // launch-time "Recover Unsaved Work" modal
+    double lastAutosave_    = 0.0;  // ImGui::GetTime() of the last write
+    double autosaveInterval_= 30.0; // seconds between ticks (BODEX_AUTOSAVE_SEC overrides)
+    bool   demoMode_        = false; // BODEX_DEMO project -> never autosaved
+    bool   openRestorePopup_= false; // deferred OpenPopup latch (mirrors openGuardPopup_)
 
     // Unsaved-changes guard: some actions must offer Save/Discard/Cancel first.
     enum class Pending { None, NewProject, OpenDialog, OpenPath, CloseProject, Quit };

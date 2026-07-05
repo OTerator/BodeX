@@ -70,8 +70,21 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
   a dedicated pure auto-*sum*-from-scratch mode is no longer needed.
 
 **Data safety**
-- **Autosave + crash recovery** — periodic autosave to `<project>.autosave`
-  (already git-ignored) and a restore prompt on next launch.
+- ~~**Autosave + crash recovery**~~ — **done:** while a project has unsaved edits,
+  a full copy is written to `%APPDATA%\BodeX\autosave\<project.id>.autosave` every
+  30s (once the current action has *settled* — same gate as the undo checkpoint),
+  plus an immediate flush on focus-loss and before quit. The config keeps a record
+  pointing at the live file; every clean exit (Save / Close / clean Quit) deletes it,
+  so a record that survives to the next launch means the app didn't close cleanly and
+  a **Recover Unsaved Work** modal offers Restore/Discard on Home. Autosave is crash
+  insurance only — it never replaces the user's `.json`; an explicit Save is still the
+  durable copy (and clears the autosave). `BODEX_AUTOSAVE_SEC` overrides the interval
+  for testing. See spec.md §8c.
+  - *Location note:* NOTES originally said `<project>.autosave` (a sidecar beside the
+    project). Shipped instead in a central `%APPDATA%\BodeX\autosave\` folder keyed by
+    `project.id` — uniform for saved/unsaved projects, stable across Save As, and it
+    keeps the user's own folders free of stray files (mirrors the image `staging\<id>`
+    dir). Still `*.autosave`, still git-ignored.
 - ~~**Undo / redo**~~ — **done:** a coalescing snapshot history over the grading
   grid (`project.students`). **Ctrl+Z** / **Ctrl+Y** (also **Ctrl+Shift+Z**, and an
   **Edit** menu). Driven off `markDirty()` — `App::maybeCommitUndo()` checkpoints at

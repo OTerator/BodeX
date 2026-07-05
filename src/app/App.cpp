@@ -83,6 +83,14 @@ App::App()
     config = gt::loadConfig();
     draft.reset();
 
+    // Autosave cadence (seconds). BODEX_AUTOSAVE_SEC overrides the default so the
+    // crash-recovery flow can be exercised quickly during testing.
+    if (const char* iv = std::getenv("BODEX_AUTOSAVE_SEC"); iv && *iv) {
+        const double v = std::atof(iv);
+        if (v > 0.0)
+            autosaveInterval_ = v;
+    }
+
     // Open a project passed via env (used for "open with" / testing).
     if (const char* op = std::getenv("BODEX_OPEN"); op && *op) {
         openProjectPath(op);
@@ -93,6 +101,7 @@ App::App()
         if (*d == '3') {                // BODEX_DEMO=3 jumps to the New Project screen
             newProjectStart();
         } else {
+            demoMode_ = true;           // in-memory demo: never autosaved / recovered
             project = buildDemoProject();
             hasProject = true;
             dirty = true;
@@ -107,6 +116,12 @@ App::App()
             statusMsg = "Demo project (BODEX_DEMO) - not saved to disk.";
         }
     }
+
+    // A pending autosave that outlived its session (we're on Home with no project,
+    // its file still exists) means the last run crashed -> offer to recover it.
+    if (!hasProject && screen == Screen::Home &&
+        !config.autosave.empty() && gt::fileExists(config.autosave.file))
+        openRestorePopup_ = true;
 }
 
 App::~App() = default;
@@ -160,11 +175,14 @@ void App::render()
     }
 
     renderUnsavedPrompt();
+    renderRestorePrompt();
 
     // After everything is drawn: checkpoint the frame's grading edit (if any) once
-    // the action has settled. Placed last so paint/inline-edit flags reflect the
-    // end-of-frame state.
+    // the action has settled, then take a rate-limited autosave under the same
+    // settle gate. Placed last so paint/inline-edit flags reflect the end-of-frame
+    // state.
     maybeCommitUndo();
+    maybeAutosave();
 }
 
 void App::renderMenuBar()
@@ -227,7 +245,7 @@ void App::performPending()
         case Pending::OpenDialog:   openProjectDialog();               break;
         case Pending::OpenPath:     openProjectPath(pendingOpenPath_); break;
         case Pending::CloseProject: closeProject();                    break;
-        case Pending::Quit:         quit_ = true;                      break;
+        case Pending::Quit:         clearAutosave(); quit_ = true;     break;
         case Pending::None:                                            break;
     }
 }
@@ -282,6 +300,7 @@ void App::newProjectStart()
 
 void App::createProjectFromDraft()
 {
+    clearAutosave();              // drop any outgoing project's autosave
     draft.syncQuestions();
     project = gt::makeProject(draft.name, draft.studentCount, draft.questions);
     project.createdIso = gt::nowIso();
@@ -315,6 +334,7 @@ bool App::openProjectPath(const std::string& path)
 
 void App::applyLoadedProject(gt::Project&& p, const std::string& path)
 {
+    clearAutosave();                // drop the outgoing project's autosave
     gt::ui::imageStoreReleaseAll(); // drop any previous project's textures
     previews.clear();               // stale windows would index into the old project
     activeRow = activeCol = 0;      // selection indexes into the new grid
@@ -362,6 +382,7 @@ bool App::doSave()
     }
 
     dirty = false;
+    clearAutosave();              // the .json is now the durable copy; drop the autosave
     gt::addRecentProject(config, projectPath);
     gt::saveConfig(config);
     statusMsg = "Saved " + projectPath;
@@ -382,6 +403,7 @@ bool App::doSaveAs()
 
 void App::closeProject()
 {
+    clearAutosave();
     gt::ui::imageStoreReleaseAll();
     hasProject = false;
     project = gt::Project{};
@@ -404,6 +426,7 @@ void App::closeProject()
 
 void App::requestQuit()
 {
+    flushAutosave();       // capture the latest edits before the guard/shutdown window
     guard(Pending::Quit);
 }
 
@@ -504,4 +527,133 @@ void App::redo()
     if (r >= 0) { activeRow = r; activeCol = c; }
     clampActive();
     gridScrollToActive = true;
+}
+
+// --------------------------------------------------------- autosave / recovery
+//
+// Crash insurance: while a project has unsaved edits, a full copy is written to
+// %APPDATA%\BodeX\autosave\<project.id>.autosave every autosaveInterval_ seconds
+// (once the current action has settled), plus an immediate flush on focus-loss and
+// before quit. The config keeps a record pointing at the live file; every clean exit
+// deletes it (clearAutosave). A record that survives to the next launch means the app
+// did not close cleanly, so App() arms renderRestorePrompt() to offer recovery. The
+// autosave never replaces the user's .json -- an explicit Save is still the durable copy.
+
+std::string App::autosaveTarget()
+{
+    if (project.id.empty())        // very old files may lack an id; the filename needs one
+        project.id = gt::newProjectId();
+    const std::string dir = gt::autosaveDir();
+    if (dir.empty())
+        return std::string();
+    return dir + "\\" + project.id + ".autosave";
+}
+
+void App::writeAutosave()
+{
+    const std::string path = autosaveTarget();
+    if (path.empty())
+        return;
+    std::string err;
+    if (!gt::saveProject(path, project, &err))
+        return;                    // best-effort; a failed autosave stays silent
+    config.autosave = { path, projectPath, project.name, gt::nowIso() };
+    gt::saveConfig(config);
+    lastAutosave_ = ImGui::GetTime();
+    statusMsg = "Autosaved " + config.autosave.savedIso;
+}
+
+void App::maybeAutosave()
+{
+    if (demoMode_ || !hasProject || screen != Screen::Grading || !dirty)
+        return;
+    // Don't write mid-action (the same settle gate as maybeCommitUndo).
+    if (paintActive || gridEditing || gridEditPageActive || ImGui::IsAnyItemActive())
+        return;
+    if (ImGui::GetTime() - lastAutosave_ < autosaveInterval_)
+        return;
+    writeAutosave();
+}
+
+void App::flushAutosave()
+{
+    if (demoMode_ || !hasProject || !dirty)
+        return;
+    writeAutosave();               // ignore the interval: capture the tail now
+}
+
+void App::clearAutosave()
+{
+    if (config.autosave.empty())
+        return;
+    gt::removeFile(config.autosave.file); // delete the recorded file (survives a Save As move)
+    config.autosave = gt::AutosaveRecord{};
+    gt::saveConfig(config);
+}
+
+void App::restoreFromAutosave()
+{
+    const gt::AutosaveRecord rec = config.autosave; // copy before we mutate config
+    gt::Project p;
+    std::string err;
+    if (!gt::loadProject(rec.file, p, &err)) {
+        statusMsg = "Recovery failed: " + err;
+        clearAutosave();           // unreadable autosave -> drop it
+        return;
+    }
+
+    // Adopt like applyLoadedProject, but keep the recovered work marked dirty and
+    // leave the autosave record in place (the next tick overwrites the same file).
+    gt::ui::imageStoreReleaseAll();
+    previews.clear();
+    activeRow = activeCol = 0;
+    gridEditing = false;
+    gridEditPageActive = false;
+    gridEditScoreDirty = false;
+    gridEditSuppressSpace = false;
+    project = std::move(p);
+    hasProject = true;
+    projectPath = rec.projectPath; // original .json, or "" if it was never saved
+    dirty = true;                  // recovered work diverges from disk
+    screen = Screen::Grading;
+    assetsDir = gt::liveAssetsDir(project, projectPath);
+    resetHistory();
+    lastAutosave_ = ImGui::GetTime(); // restart the autosave clock
+    statusMsg = "Recovered unsaved work (autosaved " + rec.savedIso + ").";
+}
+
+void App::renderRestorePrompt()
+{
+    // Deferred open on the modal's own id stack (same reasoning as renderUnsavedPrompt).
+    if (openRestorePopup_) {
+        ImGui::OpenPopup("Recover Unsaved Work");
+        openRestorePopup_ = false;
+    }
+
+    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    if (!ImGui::BeginPopupModal("Recover Unsaved Work", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    const gt::AutosaveRecord& rec = config.autosave;
+    const std::string name = rec.name.empty() ? std::string("(unsaved project)") : rec.name;
+    ImGui::TextUnformatted("BodeX closed unexpectedly with unsaved work.");
+    ImGui::Spacing();
+    ImGui::Text("Project:   %s", name.c_str());
+    if (!rec.savedIso.empty())
+        ImGui::Text("Autosaved: %s", rec.savedIso.c_str());
+    ImGui::Spacing();
+
+    if (ImGui::Button("Restore", ImVec2(110, 0))) {
+        restoreFromAutosave();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Discard", ImVec2(110, 0))) {
+        clearAutosave();
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
 }
