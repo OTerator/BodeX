@@ -109,12 +109,15 @@ BODEX_DEMO=1 ./build/BodeX.exe
    full (a blank cell jumps straight to full-minus-one) and **`+`** builds up from 0;
    step back up to the max and the cell reads green **FULL** again. Press **Space** to
    open the inline editor without typing (nothing changes until you edit a field);
-   press **Space again** to add/change the **last page** — handy for tagging a page on
-   a green FULL cell without disturbing its score. **Enter** commits and moves down,
-   **Tab** commits and moves right, **Esc** cancels. **`f`** toggles full marks, **`n`**
-   toggles *No submission* for the row, **Del** clears the cell, and **F2** opens the
-   full cell editor. Clicking a cell also moves the selection there, so mouse and
-   keyboard mix freely.
+   press **Space again** (or **`p`** straight from the grid) to add/change the **last
+   page** — handy for tagging a page on a green FULL cell without disturbing its score.
+   Inside the inline editor, **`f`** marks the cell **FULL** and hops straight into the
+   last-page field, so *full + a page* is `Space → f → number → Enter`. **Enter**
+   commits and moves down, **Tab** commits and moves right, **Esc** cancels. **`f`**
+   (on the grid) toggles full marks, **`n`** toggles *No submission* for the row,
+   **Del** clears the cell, **`e`** or **F2** opens the full cell editor, and **F1**
+   shows a shortcuts cheat-sheet. Clicking a cell also moves the selection there, so
+   mouse and keyboard mix freely.
 4. Click a **student ID** to mark *No submission* (row scores 0).
 5. **Undo / redo.** **Ctrl+Z** undoes the last grading action, **Ctrl+Y** (or
    **Ctrl+Shift+Z**) redoes it — also on the **Edit** menu. A whole right-drag paint

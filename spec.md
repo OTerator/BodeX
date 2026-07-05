@@ -448,12 +448,13 @@ In `GradingTable.cpp`:
   move it; **digits/`.`** begin an inline awarded-points edit; **`+`/`-`** step the
   awarded points ±1 in place in one press (`-` docks from full/current, `+` builds up
   — `gt::stepAwarded`; `-` is no longer an inline-edit seed char); **Space** opens the
-  inline editor in *review* mode (nothing typed) — press it **again** to step into the
-  inline **last-page** field, so you can add a page to any cell (incl. a green FULL)
-  without disturbing its score; **Enter**/**Tab** commit and advance
-  (down / right; Shift+Tab left); **Esc** cancels; **`f`**/**`n`** toggle full-marks /
-  the row's no-submission; **Del**/**Backspace** clear the cell; **F2** opens the full
-  editor. Mechanics detailed below.
+  inline editor in *review* mode (nothing typed) — press it **again** (or **`p`**
+  straight from the grid) to step into the inline **last-page** field, so you can add a
+  page to any cell (incl. a green FULL) without disturbing its score; **Enter**/**Tab**
+  commit and advance (down / right; Shift+Tab left); **Esc** cancels; **`f`**/**`n`**
+  toggle full-marks / the row's no-submission; **Del**/**Backspace** clear the cell;
+  **`e`**/**F2** open the full editor; **F1** toggles a shortcuts help overlay.
+  Mechanics detailed below.
 
   (L/R were swapped deliberately: the left-click editor uses `IsItemClicked`, which
   is occlusion-aware, so it won't fire for cells hidden under a floating image
@@ -522,11 +523,30 @@ near the top of `gradingScreen`, **before** `BeginTable`, so the selection / scr
   into** and changed; `markDirty()` fires only if something changed. So Space→page→Enter
   on a green FULL cell keeps it FULL and just adds the page, and Space→Esc (or a
   no-edit commit) leaves the cell exactly as it was. State is reset in
-  `applyLoadedProject`/`closeProject` alongside `gridEditing`.
-- Toggling full marks via **`f`** leaves `touched` alone (the §6 invariant), same as
-  the mouse paint. Active-cell state lives on `App` (`activeRow/Col`, `gridEditing`,
-  `gridEditBuf`, `gridEditFocus`, `gridEditDeselect`, `gridScrollToActive`) and is
-  reset in `applyLoadedProject`/`closeProject` (indices point into the old grid).
+  `applyLoadedProject`/`closeProject` alongside `gridEditing`. **`p`** from the grid is
+  a shortcut for Space-then-Space: it opens the inline editor with `gridEditPageActive`
+  already set and focus on the `lp:` field (score seeded but `gridEditFocus=false`), so
+  tagging a page is one key.
+- **`f` inside the inline editor** toggles `fullTick` (CharsDecimal filters the letter
+  out of the score buffer, so it is a clean hotkey read with `IsKeyPressed`, like
+  Space/Tab/Esc). It leaves `touched` alone (the §6 invariant); on turning FULL **on**
+  it steps into the `lp:` field (reusing the Space-step), and it clears
+  `gridEditScoreDirty` so the commit path preserves the tick — so `Space→f→<page>→Enter`
+  marks the cell FULL and records the page in one flow. Pressing `f` again un-fulls
+  (and, since a fresh cell stays `!touched`, un-fulling a blank cell returns it to `-`,
+  not a stray `0 0/Y`). **Gotcha:** the handler must **not** write `gridEditBuf` — that
+  string backs the *active* score `InputText`, and reseeding an active InputText desyncs
+  ImGui's edit state (it writes its stale buffer back on the focus change to `lp:` and
+  trips `IsItemEdited`, which would set `gridEditScoreDirty` and make the commit clear
+  `fullTick`). Leave the buffer alone; the green FULL shows on commit.
+- Toggling full marks via **`f`** (on the grid) leaves `touched` alone (the §6
+  invariant), same as the mouse paint. **`e`** mirrors **F2** (open the cell editor).
+  **F1** toggles `App::showShortcuts`, a plain-text help overlay drawn after the
+  `Grading` window (no interactive widgets / `NoFocusOnAppearing`, so it doesn't fight
+  the grid's key handling). Active-cell state lives on `App` (`activeRow/Col`,
+  `gridEditing`, `gridEditBuf`, `gridEditFocus`, `gridEditDeselect`,
+  `gridScrollToActive`) and is reset in `applyLoadedProject`/`closeProject` (indices
+  point into the old grid).
 
 ---
 

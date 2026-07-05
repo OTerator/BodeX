@@ -58,8 +58,15 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
     writes only fields you actually edit, so you can add a **last page** to a green
     FULL cell (Space → Space → page → Enter) without opening the config popup or
     disturbing the score. spec.md §9.
+  - **More edit/lp/full shortcuts** (done): `e` opens the cell editor (alias of `F2`);
+    `p` opens the inline editor straight on the `lp:` field (one key vs Space→Space);
+    and inside the inline editor `f` marks the cell **FULL** and hops into the `lp:`
+    field, so *full + a page* is `Space → f → number → Enter`. spec.md §9.
+  - **Shortcuts help overlay** (done): `F1` toggles an on-screen legend of the grid
+    keys (`App::showShortcuts`), for discoverability. spec.md §9.
   - *Future:* a **configurable step size** for `+`/`-` (e.g. 0.5) — belongs in the
-    settings panel below.
+    settings panel below. A **quick inline note (`c`)** and **keyboard range-full**
+    (Shift+arrows to select, then `f`) are natural next keyboard wins.
 - ~~**Tick sub-questions to auto-compute the score**~~ — **done** (v2 + sync): cells
   default to all-answered and skipped sub-questions **lock out** their points (equal
   split by count; custom split by per-sub-question ticks, deducting each part's

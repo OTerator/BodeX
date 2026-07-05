@@ -207,6 +207,26 @@ void renderInlineEdit(App& app, int i, int j)
     const bool tab = ImGui::IsKeyPressed(ImGuiKey_Tab);
     const bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape);
 
+    // 'f' inside the editor toggles full marks (CharsDecimal keeps the letter out of
+    // the score buffer, so it is a clean hotkey). Mirror the grid's 'f': leave `touched`
+    // alone (§6). Turning FULL on also hops straight into the lp field, so marking a
+    // cell full and noting a page is Space -> f -> <page> -> Enter with nothing between.
+    // NB: do NOT touch gridEditBuf here — it backs the *active* score InputText, and
+    // reseeding an active InputText desyncs ImGui's edit state (it writes its stale
+    // buffer back on the focus change and trips IsItemEdited, wrongly setting
+    // gridEditScoreDirty -> commit would clear the tick). Leaving the buffer alone,
+    // gridEditScoreDirty stays false, so the commit path preserves fullTick.
+    if (ImGui::IsKeyPressed(ImGuiKey_F)) {
+        c.fullTick = !c.fullTick;
+        app.gridEditScoreDirty = false;              // the FULL toggle governs; keep the tick
+        if (c.fullTick) {
+            app.gridEditPageActive = true;           // jump into lp: (reuses the Space-step)
+            app.gridEditPageBuf = c.lastPage;
+            app.gridEditPageFocus = true;
+        }
+        app.markDirty();
+    }
+
     // Record the rect (so the paint hit-test still sees a cell here) + highlight.
     g_cellRects.push_back({ rmin, rmax, i, j });
     ImGui::GetWindowDrawList()->AddRect(rmin, rmax, IM_COL32(90, 160, 255, 255), 0.0f, 0, 2.5f);
@@ -414,7 +434,8 @@ void handleGridKeyboard(App& app)
     gt::Question& q    = p.questions[static_cast<size_t>(c)];
 
     // ---- single-key actions (no key-repeat) ----
-    if (ImGui::IsKeyPressed(ImGuiKey_F2, false)) {           // open the full editor
+    if (ImGui::IsKeyPressed(ImGuiKey_F2, false) ||           // open the full editor
+        ImGui::IsKeyPressed(ImGuiKey_E, false)) {            // 'e' = same as F2
         app.editorStudent = r;
         app.editorQuestion = c;
         app.requestOpenCellEditor = true;
@@ -431,6 +452,24 @@ void handleGridKeyboard(App& app)
          ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) && !s.noSubmission) {
         cell = gt::blankCell(p.questions[static_cast<size_t>(c)]); // blank, all-answered
         app.markDirty();
+    }
+
+    // ---- 'p' opens the inline editor straight on the last-page (lp) field ----
+    // Like Space-open followed by an immediate Space-step: seed the score with the
+    // cell's current value (so a later score edit is possible) but drop focus onto the
+    // lp field, so tagging a page is a single key.
+    if (ImGui::IsKeyPressed(ImGuiKey_P, false) && !s.noSubmission) {
+        if (gt::isFullMarks(q, cell)) app.gridEditBuf = fmtNum(q.maxPoints);
+        else if (cell.touched)        app.gridEditBuf = fmtNum(cell.awarded);
+        else                          app.gridEditBuf.clear();
+        app.gridEditing = true;
+        app.gridEditFocus = false;         // don't grab the score field...
+        app.gridEditDeselect = false;
+        app.gridEditScoreDirty = false;
+        app.gridEditSuppressSpace = false;
+        app.gridEditPageActive = true;     // ...open straight on lp:
+        app.gridEditPageBuf = cell.lastPage;
+        app.gridEditPageFocus = true;
     }
 
     // ---- +/- step the active cell's awarded points ----
@@ -528,6 +567,9 @@ void gradingScreen(App& app)
     // Keyboard-first grading: move the selection / begin inline entry / act on the
     // active cell. Before BeginTable so the changes take effect this frame.
     handleGridKeyboard(app);
+
+    // F1 toggles the shortcuts help overlay (drawn after the table, below).
+    if (ImGui::IsKeyPressed(ImGuiKey_F1, false)) app.showShortcuts = !app.showShortcuts;
 
     // ---- grid ----
     const int M = static_cast<int>(p.questions.size());
@@ -628,7 +670,7 @@ void gradingScreen(App& app)
 
     // ---- status bar ----
     ImGui::TextDisabled("%s", app.statusMsg.empty()
-        ? "Arrows move; type or +/- for points; Space opens edit (Space again = last page); Enter/Tab commit; F2 full editor; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+S saves."
+        ? "Arrows move; type or +/- for points; Space opens edit (Space again or p = last page); Enter/Tab commit; e/F2 editor; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+S saves.  F1 shortcuts."
         : app.statusMsg.c_str());
 
     // ---- popups (opened here, after the table, using stored targets) ----
@@ -649,6 +691,29 @@ void gradingScreen(App& app)
     questionImagesPopup(app);
 
     ImGui::End();
+
+    // Shortcuts help overlay (F1). A plain text window, no interactive widgets, so it
+    // doesn't fight the grid's key handling; NoFocusOnAppearing keeps the grid focused.
+    if (app.showShortcuts) {
+        ImGui::SetNextWindowBgAlpha(0.92f);
+        if (ImGui::Begin("Grid shortcuts (F1)", &app.showShortcuts,
+                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing)) {
+            ImGui::TextUnformatted(
+                "Arrows      move selection\n"
+                "0-9 .       type awarded points (inline)\n"
+                "+ / -       step points +/-1 (one press)\n"
+                "Space       open inline edit; Space again = last page\n"
+                "p           edit last page (lp) directly\n"
+                "f           full marks (in editor: FULL, then jump to lp)\n"
+                "e / F2      open the cell editor\n"
+                "n           toggle No-submission (row)\n"
+                "Del         clear the cell\n"
+                "Enter/Tab   commit (down / right); Esc cancels\n"
+                "Ctrl+Z / Y  undo / redo     Ctrl+S  save\n"
+                "Right-drag  paint full marks across a row/column");
+        }
+        ImGui::End();
+    }
 
     // Image previews are separate, non-modal windows (several can stay open while
     // grading; navigate/zoom them without touching the header popup).

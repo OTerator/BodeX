@@ -96,6 +96,7 @@ public:
     bool        gridScrollToActive = false; // scroll active cell into view next draw
     bool        anyPreviewFocused = false;  // an image-preview window has the keyboard
                                             // (recomputed each frame; grid keys yield to it)
+    bool        showShortcuts = false;      // F1 toggles the grid shortcuts help overlay
 
     // Question images: where this project's image files currently live.
     std::string assetsDir;
