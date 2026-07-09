@@ -149,10 +149,15 @@ ClassStats classStats(const Project& p)
         return st;
 
     double sum = 0.0;
+    double submittedSum = 0.0;
     bool first = true;
     for (const auto& s : p.students) {
         const double total = studentTotal(p, s);
         sum += total;
+        if (!s.noSubmission) {
+            submittedSum += total;
+            ++st.submitted;
+        }
         if (first) {
             st.minScore = st.maxScore = total;
             first = false;
@@ -171,7 +176,39 @@ ClassStats classStats(const Project& p)
             ++st.graded;
     }
     st.average = sum / static_cast<double>(p.students.size());
+    st.averageSubmitted = st.submitted > 0
+        ? submittedSum / static_cast<double>(st.submitted) : 0.0;
     return st;
+}
+
+std::vector<QuestionStats> perQuestionStats(const Project& p)
+{
+    std::vector<QuestionStats> out(p.questions.size());
+    for (size_t j = 0; j < p.questions.size(); ++j) {
+        out[j].maxPoints = p.questions[j].maxPoints;
+        out[j].subCount  = p.questions[j].subCount;
+    }
+
+    for (const auto& s : p.students) {
+        if (s.noSubmission)
+            continue;
+        const size_t n = s.cells.size() < p.questions.size() ? s.cells.size()
+                                                             : p.questions.size();
+        for (size_t j = 0; j < n; ++j) {
+            const Question& q = p.questions[j];
+            const Cell&     c = s.cells[j];
+            out[j].average     += cellPoints(s, q, c);
+            out[j].avgAnswered += static_cast<double>(c.subAnswered);
+            ++out[j].counted;
+        }
+    }
+    for (auto& qs : out) {
+        if (qs.counted > 0) {
+            qs.average     /= static_cast<double>(qs.counted);
+            qs.avgAnswered /= static_cast<double>(qs.counted);
+        }
+    }
+    return out;
 }
 
 } // namespace gt

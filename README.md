@@ -28,8 +28,12 @@ toolchain and needs no external libraries installed.
     pass where you left off.
 - **No submission** — click a student's ID cell and toggle *No submission*; the
   whole row automatically scores 0 and is greyed out.
-- **Live totals** — each student's `score / max` updates as you grade, plus a
-  class summary (graded count, average, min, max) in the toolbar.
+- **Live totals & stats** — each student's `score / max` updates as you grade, plus
+  a class summary in the toolbar: student / graded / submitted counts, **two
+  averages** — over everyone *and* over just the students who submitted (so the
+  people who didn't hand in don't drag the class mean down) — and min / max. A
+  **Stats** button opens a per-question breakdown (average, average %, sub-questions
+  answered) that flags the hardest question.
 - **Undo / redo** — every grading action (cell edits, full-marks, paint, no
   submission) can be undone with **Ctrl+Z** and redone with **Ctrl+Y**; the grid
   jumps to the cell that changed so you can see what was reverted.
@@ -118,7 +122,11 @@ BODEX_DEMO=1 ./build/BodeX.exe
    **Del** clears the cell, **`e`** or **F2** opens the full cell editor, and **F1**
    (or **Help → Keyboard Shortcuts**) shows a shortcuts cheat-sheet. Clicking a cell
    also moves the selection there, so mouse and keyboard mix freely.
-4. Click a **student ID** to mark *No submission* (row scores 0).
+4. Click a **student ID** to mark *No submission* (row scores 0). No-submission rows
+   are excluded from the **submitted** average, so a handful of no-shows won't sink
+   the class mean — the toolbar shows both `avg` (everyone) and `avg(sub)` (submitters
+   only). The **Stats** button opens the full breakdown, including per-question
+   averages and the hardest question.
 5. **Undo / redo.** **Ctrl+Z** undoes the last grading action, **Ctrl+Y** (or
    **Ctrl+Shift+Z**) redoes it — also on the **Edit** menu. A whole right-drag paint
    counts as one step, and the selection jumps to the reverted cell. History is

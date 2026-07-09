@@ -557,6 +557,81 @@ void handleGridKeyboard(App& app)
         app.gridScrollToActive = true;
 }
 
+// Read-only class + per-question statistics, shown in a modal off the toolbar
+// "Stats" button. All strings are ASCII so the default chrome font renders them
+// (the "%" in labels is literal text, not a printf conversion).
+void renderStatsPopup(App& app)
+{
+    const gt::Project& p = app.project;
+
+    if (!ImGui::BeginPopupModal("Class Stats", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    const gt::ClassStats st = gt::classStats(p);
+    const double maxTotal = gt::projectMaxTotal(p);
+
+    ImGui::Text("%s", p.name.c_str());
+    ImGui::TextDisabled("students %d   submitted %d   (out of %s)",
+                        st.students, st.submitted, fmtNum(maxTotal).c_str());
+    ImGui::Text("avg (all %d):       %s", st.students, fmtNum(st.average).c_str());
+    ImGui::Text("avg (submitted %d): %s", st.submitted, fmtNum(st.averageSubmitted).c_str());
+    ImGui::TextDisabled("min %s    max %s",
+                        fmtNum(st.minScore).c_str(), fmtNum(st.maxScore).c_str());
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Per question (averaged over submitters):");
+
+    const std::vector<gt::QuestionStats> qs = gt::perQuestionStats(p);
+
+    // Hardest question = lowest average as a fraction of its own max points.
+    int hardest = -1;
+    double worst = DBL_MAX;
+    for (size_t j = 0; j < qs.size(); ++j) {
+        if (qs[j].counted == 0 || qs[j].maxPoints <= 0.0) continue;
+        const double frac = qs[j].average / qs[j].maxPoints;
+        if (frac < worst) { worst = frac; hardest = static_cast<int>(j); }
+    }
+
+    const ImGuiTableFlags tflags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg
+                                 | ImGuiTableFlags_SizingFixedFit;
+    if (ImGui::BeginTable("qstats", 5, tflags)) {
+        ImGui::TableSetupColumn("Question");
+        ImGui::TableSetupColumn("Max");
+        ImGui::TableSetupColumn("Avg");
+        ImGui::TableSetupColumn("Avg%");
+        ImGui::TableSetupColumn("Answered");
+        ImGui::TableHeadersRow();
+
+        for (size_t j = 0; j < qs.size(); ++j) {
+            const gt::QuestionStats& s = qs[j];
+            const bool isHardest = static_cast<int>(j) == hardest;
+            ImGui::TableNextRow();
+            if (isHardest)
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kNoSubRowBg);
+
+            char pct[16] = "-";
+            if (s.maxPoints > 0.0)
+                std::snprintf(pct, sizeof(pct), "%.0f%%", 100.0 * s.average / s.maxPoints);
+
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%s%s", p.questions[j].title.c_str(),
+                        isHardest ? "  (hardest)" : "");
+            ImGui::TableSetColumnIndex(1); ImGui::Text("%s", fmtNum(s.maxPoints).c_str());
+            ImGui::TableSetColumnIndex(2); ImGui::Text("%s", fmtNum(s.average).c_str());
+            ImGui::TableSetColumnIndex(3); ImGui::Text("%s", pct);
+            ImGui::TableSetColumnIndex(4);
+            ImGui::Text("%s/%d", fmtNum(s.avgAnswered).c_str(), s.subCount);
+        }
+        ImGui::EndTable();
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button("Close"))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
 } // namespace
 
 void gradingScreen(App& app)
@@ -579,13 +654,17 @@ void gradingScreen(App& app)
     ImGui::SameLine();
     if (ImGui::SmallButton("Save As")) app.doSaveAs();
     ImGui::SameLine();
+    if (ImGui::SmallButton("Stats"))   ImGui::OpenPopup("Class Stats");
+    ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
     const gt::ClassStats st = gt::classStats(p);
-    ImGui::TextDisabled("students %d  graded %d  avg %s  min %s  max %s  (out of %s)",
-                        st.students, st.graded, fmtNum(st.average).c_str(),
+    ImGui::TextDisabled("students %d  graded %d  submitted %d  avg %s  avg(sub) %s  min %s  max %s  (out of %s)",
+                        st.students, st.graded, st.submitted,
+                        fmtNum(st.average).c_str(), fmtNum(st.averageSubmitted).c_str(),
                         fmtNum(st.minScore).c_str(), fmtNum(st.maxScore).c_str(),
                         fmtNum(gt::projectMaxTotal(p)).c_str());
+    renderStatsPopup(app);
 
     // Keyboard-first grading: move the selection / begin inline entry / act on the
     // active cell. Before BeginTable so the changes take effect this frame.

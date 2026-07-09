@@ -102,9 +102,26 @@ static void testScoring()
     ClassStats st = classStats(p);
     CHECK(st.students == 3);
     CHECK(st.graded == 3);            // all three touched or no-submission
+    CHECK(st.submitted == 2);         // student 2 is no-submission -> excluded
     CHECK_NEAR(st.minScore, 0.0);
     CHECK_NEAR(st.maxScore, 22.0);
     CHECK_NEAR(st.average, (22.0 + 0.0 + 20.0) / 3.0);
+    // avg over submitters skips the no-submission 0 (denominator 2, not 3).
+    CHECK_NEAR(st.averageSubmitted, (22.0 + 20.0) / 2.0);
+
+    // Per-question stats are averaged over the 2 submitters only (the no-submission
+    // row never counts). Q1: (12 + 20)/2 = 16, answered (3 + 5)/2 = 4;
+    // Q2: full-tick 10 and clamped-to-0 -> (10 + 0)/2 = 5, answered (2 + 2)/2 = 2.
+    std::vector<QuestionStats> qs = perQuestionStats(p);
+    CHECK(qs.size() == 2);
+    CHECK(qs[0].counted == 2);
+    CHECK_NEAR(qs[0].maxPoints, 20.0);
+    CHECK_NEAR(qs[0].average, 16.0);
+    CHECK_NEAR(qs[0].avgAnswered, 4.0);
+    CHECK(qs[1].counted == 2);
+    CHECK_NEAR(qs[1].maxPoints, 10.0);
+    CHECK_NEAR(qs[1].average, 5.0);
+    CHECK_NEAR(qs[1].avgAnswered, 2.0);
 }
 
 static void testRoundTrip()

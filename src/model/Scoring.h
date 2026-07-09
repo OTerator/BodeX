@@ -66,12 +66,29 @@ void stepAwarded(const Question& q, Cell& c, double delta);
 
 // Simple class-wide summary for the status bar.
 struct ClassStats {
-    int    students = 0; // total rows
-    int    graded = 0;   // rows marked no-submission or with any touched cell
-    double average = 0.0;
+    int    students = 0;  // total rows
+    int    graded = 0;    // rows marked no-submission or with any touched cell
+    int    submitted = 0; // rows with !noSubmission (denominator for averageSubmitted)
+    double average = 0.0;          // mean studentTotal over ALL students (0s included)
+    double averageSubmitted = 0.0; // mean studentTotal over submitters only (0 if none)
     double minScore = 0.0;
     double maxScore = 0.0;
 };
 ClassStats classStats(const Project& p);
+
+// Per-question class summary (for the Stats panel). Averages are taken over
+// submitters (`!noSubmission`) only — a non-submitter never attempted anything, so
+// counting their 0 would distort per-question difficulty. A submitter who left a
+// question blank *does* count as 0 (an honest miss). GUI-free / unit-tested.
+struct QuestionStats {
+    double maxPoints   = 0.0;
+    double average     = 0.0; // mean cellPoints over submitters
+    double avgAnswered = 0.0; // mean subAnswered (the X in "X/Y") over submitters
+    int    subCount    = 0;
+    int    counted     = 0;   // number of submitters averaged
+};
+// One entry per question, in question order. The "hardest question" is derived by
+// the caller as the min of average / maxPoints.
+std::vector<QuestionStats> perQuestionStats(const Project& p);
 
 } // namespace gt

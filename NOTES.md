@@ -112,8 +112,16 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
     marker, and after crossing it the marker can sit on either the undo or redo side.
 
 **Analytics (data already collected)**
-- **Per-question stats** — average per question, hardest question, and
-  sub-question answer rates from the `X/Y` values already recorded.
+- ~~**Per-question stats**~~ — **done:** a **Stats** button in the grading toolbar
+  opens a read-only modal (`gt::perQuestionStats` + `renderStatsPopup`) with a
+  per-question table — average, average %, and average sub-questions answered — over
+  the students who submitted, with the **hardest** question (lowest avg %) tinted and
+  labelled. Same panel repeats the class summary. spec.md §6/§9.
+  - Shipped alongside a **second class average**: non-submission rows scored 0 were
+    dragging the class mean down (e.g. a 35-student exam with 4 no-shows read 77.9
+    instead of 87.9). `classStats` now reports both `average` (all rows) and
+    `averageSubmitted` (rows with `!noSubmission`), shown as `avg` / `avg(sub)` in the
+    status bar. Min/max are still over all rows.
 - **Grade distribution histogram.**
 
 **Images (extend the current feature)**

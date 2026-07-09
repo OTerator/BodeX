@@ -262,7 +262,15 @@ Per-cell effective points, **highest precedence first**:
   buttons and the grid's `+`/`-` keys (§9). GUI-free/tested. *(Distinct from the
   sub-question helpers above, which keep the sync-then-deduct behavior.)*
 - `classStats(p)` = students / graded (no-submission or any touched-or-full cell) /
-  average / min / max.
+  **submitted** (rows with `!noSubmission`) / **average** (mean total over *all*
+  students — 0s included) / **averageSubmitted** (mean total over submitters only,
+  0 if none) / min / max. The two averages exist because non-submitters score 0 and
+  otherwise drag the class mean down (e.g. 35 students, 4 no-subs: 77.9 vs 87.9).
+- `perQuestionStats(p)` = one `QuestionStats` per question (max / average points /
+  average sub-questions answered / subCount / counted), **averaged over submitters
+  only** (a non-submitter never attempted anything; a submitter who left a question
+  blank still counts as a 0 for that question). The "hardest question" is derived by
+  the caller (Stats popup) as the min of `average / maxPoints`. GUI-free/tested.
 
 **Invariants to respect when editing:**
 - **Sub-questions default to all-answered** (`blankCell`), and skipped ones now
@@ -448,6 +456,13 @@ sets `demoMode_` and is never autosaved (so it can't fabricate a recovery prompt
 ## 9. Grading grid interactions (important detail)
 
 In `GradingTable.cpp`:
+- **Toolbar / status bar** (top of `gradingScreen`): name • Save • Save As • **Stats**
+  • the class summary from `classStats` — `students / graded / submitted / avg /
+  avg(sub) / min / max / (out of)`. `avg` is over all rows, `avg(sub)` over submitters
+  only (see §6). **Stats** opens a read-only modal (`renderStatsPopup`): the class
+  summary plus a per-question table (`perQuestionStats`) — Question / Max / Avg / Avg%
+  / Answered — with the hardest question (lowest Avg%) tinted and labelled. All strings
+  are ASCII (chrome-font rule, §10).
 - **Right-click a cell** = toggle full marks. **Right-click + drag** = "paint" full
   marks across a **row or column** (axis locked from the initial drag direction).
 - **Left-click a cell** = open the detailed cell editor (also moves the keyboard
