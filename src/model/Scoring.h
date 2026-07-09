@@ -79,13 +79,17 @@ ClassStats classStats(const Project& p);
 // Per-question class summary (for the Stats panel). Averages are taken over
 // submitters (`!noSubmission`) only — a non-submitter never attempted anything, so
 // counting their 0 would distort per-question difficulty. A submitter who left a
-// question blank *does* count as 0 (an honest miss). GUI-free / unit-tested.
+// question blank *does* count as 0 for `average` (an honest miss), but is excluded
+// from `avgAnswered`: blank cells default to subAnswered==subCount ("all answered"),
+// which would inflate the answer rate, so avgAnswered is averaged over only the cells
+// a student actually engaged with (`touched || fullTick`). GUI-free / unit-tested.
 struct QuestionStats {
     double maxPoints   = 0.0;
     double average     = 0.0; // mean cellPoints over submitters
-    double avgAnswered = 0.0; // mean subAnswered (the X in "X/Y") over submitters
+    double avgAnswered = 0.0; // mean subAnswered over ATTEMPTED cells (see `attempted`)
     int    subCount    = 0;
-    int    counted     = 0;   // number of submitters averaged
+    int    counted     = 0;   // submitters averaged into `average`
+    int    attempted   = 0;   // cells touched/full-marked (avgAnswered denominator; 0 => show '-')
 };
 // One entry per question, in question order. The "hardest question" is derived by
 // the caller as the min of average / maxPoints.

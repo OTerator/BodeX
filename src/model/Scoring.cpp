@@ -197,16 +197,21 @@ std::vector<QuestionStats> perQuestionStats(const Project& p)
         for (size_t j = 0; j < n; ++j) {
             const Question& q = p.questions[j];
             const Cell&     c = s.cells[j];
-            out[j].average     += cellPoints(s, q, c);
-            out[j].avgAnswered += static_cast<double>(c.subAnswered);
+            out[j].average += cellPoints(s, q, c);
             ++out[j].counted;
+            // Only cells the grader actually engaged with feed the answer rate — a
+            // never-touched cell defaults to subAnswered==subCount and would inflate it.
+            if (c.touched || c.fullTick) {
+                out[j].avgAnswered += static_cast<double>(c.subAnswered);
+                ++out[j].attempted;
+            }
         }
     }
     for (auto& qs : out) {
-        if (qs.counted > 0) {
-            qs.average     /= static_cast<double>(qs.counted);
-            qs.avgAnswered /= static_cast<double>(qs.counted);
-        }
+        if (qs.counted > 0)
+            qs.average /= static_cast<double>(qs.counted);
+        if (qs.attempted > 0)
+            qs.avgAnswered /= static_cast<double>(qs.attempted);
     }
     return out;
 }

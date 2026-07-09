@@ -115,13 +115,42 @@ static void testScoring()
     std::vector<QuestionStats> qs = perQuestionStats(p);
     CHECK(qs.size() == 2);
     CHECK(qs[0].counted == 2);
+    CHECK(qs[0].attempted == 2);      // both submitters touched Q1
     CHECK_NEAR(qs[0].maxPoints, 20.0);
     CHECK_NEAR(qs[0].average, 16.0);
     CHECK_NEAR(qs[0].avgAnswered, 4.0);
     CHECK(qs[1].counted == 2);
+    CHECK(qs[1].attempted == 2);      // student 0 full-tick, student 2 touched
     CHECK_NEAR(qs[1].maxPoints, 10.0);
     CHECK_NEAR(qs[1].average, 5.0);
     CHECK_NEAR(qs[1].avgAnswered, 2.0);
+}
+
+// The answer rate (avgAnswered) must exclude cells the grader never touched: a blank
+// cell defaults to subAnswered==subCount, which would otherwise inflate the rate.
+static void testPerQuestionAnswered()
+{
+    Question q; q.title = "Q1"; q.maxPoints = 15.0; q.subCount = 3;
+    Project p = makeProject("Answered", 2, {q});
+
+    // Student 1 attempted Q1: 2 of 3 sub-questions answered (one skipped).
+    setAnsweredCount(p.questions[0], p.students[0].cells[0], 2);
+    // subAnswered defaults to 3 for the still-blank cell; cellPoints on the touched
+    // cell is effectiveMax for 2/3 = 10.
+    CHECK(p.students[0].cells[0].touched);
+    CHECK(p.students[0].cells[0].subAnswered == 2);
+
+    // Student 2 left Q1 blank (untouched) — its subAnswered is the default 3.
+    CHECK(!p.students[1].cells[0].touched);
+    CHECK(p.students[1].cells[0].subAnswered == 3);
+
+    std::vector<QuestionStats> qs = perQuestionStats(p);
+    CHECK(qs.size() == 1);
+    CHECK(qs[0].counted == 2);        // both submitters feed `average`
+    CHECK(qs[0].attempted == 1);      // only student 1 engaged with Q1
+    CHECK_NEAR(qs[0].avgAnswered, 2.0); // blank excluded -> 2/1, NOT (2 + 3)/2 = 2.5
+    // average still counts the blank as a 0: (10 + 0) / 2 = 5.
+    CHECK_NEAR(qs[0].average, 5.0);
 }
 
 static void testRoundTrip()
@@ -707,6 +736,7 @@ static void testBidi()
 int main()
 {
     testScoring();
+    testPerQuestionAnswered();
     testRoundTrip();
     testFileRoundTrip();
     testImagesRoundTrip();

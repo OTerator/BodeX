@@ -621,7 +621,10 @@ void renderStatsPopup(App& app)
             ImGui::TableSetColumnIndex(2); ImGui::Text("%s", fmtNum(s.average).c_str());
             ImGui::TableSetColumnIndex(3); ImGui::Text("%s", pct);
             ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%s/%d", fmtNum(s.avgAnswered).c_str(), s.subCount);
+            if (s.attempted > 0)
+                ImGui::Text("%s/%d", fmtNum(s.avgAnswered).c_str(), s.subCount);
+            else
+                ImGui::TextDisabled("-");   // nobody attempted this question
         }
         ImGui::EndTable();
     }

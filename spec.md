@@ -267,9 +267,12 @@ Per-cell effective points, **highest precedence first**:
   0 if none) / min / max. The two averages exist because non-submitters score 0 and
   otherwise drag the class mean down (e.g. 35 students, 4 no-subs: 77.9 vs 87.9).
 - `perQuestionStats(p)` = one `QuestionStats` per question (max / average points /
-  average sub-questions answered / subCount / counted), **averaged over submitters
-  only** (a non-submitter never attempted anything; a submitter who left a question
-  blank still counts as a 0 for that question). The "hardest question" is derived by
+  average sub-questions answered / subCount / counted / attempted), **averaged over
+  submitters only**. `average` counts a submitter's blank question as a 0 (honest
+  difficulty). `avgAnswered`, however, is averaged over only **attempted** cells
+  (`touched || fullTick`): blank cells default to `subAnswered == subCount`, so
+  counting them would inflate the answer rate — a question nobody attempted has
+  `attempted == 0` and the Stats popup shows `-`. The "hardest question" is derived by
   the caller (Stats popup) as the min of `average / maxPoints`. GUI-free/tested.
 
 **Invariants to respect when editing:**

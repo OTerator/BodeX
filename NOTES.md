@@ -117,6 +117,10 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
   per-question table — average, average %, and average sub-questions answered — over
   the students who submitted, with the **hardest** question (lowest avg %) tinted and
   labelled. Same panel repeats the class summary. spec.md §6/§9.
+  - *Refinement:* the **Answered** rate averages only over cells a student actually
+    engaged with (`touched || fullTick`) — blank cells default to "all sub-questions
+    answered" and would otherwise inflate it, so a question nobody attempted shows `-`
+    (`QuestionStats::attempted`). `Avg`/`Avg%` still count a blank as an honest 0.
   - Shipped alongside a **second class average**: non-submission rows scored 0 were
     dragging the class mean down (e.g. a 35-student exam with 4 no-shows read 77.9
     instead of 87.9). `classStats` now reports both `average` (all rows) and

@@ -32,8 +32,9 @@ toolchain and needs no external libraries installed.
   a class summary in the toolbar: student / graded / submitted counts, **two
   averages** — over everyone *and* over just the students who submitted (so the
   people who didn't hand in don't drag the class mean down) — and min / max. A
-  **Stats** button opens a per-question breakdown (average, average %, sub-questions
-  answered) that flags the hardest question.
+  **Stats** button opens a per-question breakdown (average, average %, and
+  sub-questions answered among the students who attempted it) that flags the hardest
+  question.
 - **Undo / redo** — every grading action (cell edits, full-marks, paint, no
   submission) can be undone with **Ctrl+Z** and redone with **Ctrl+Y**; the grid
   jumps to the cell that changed so you can see what was reverted.
