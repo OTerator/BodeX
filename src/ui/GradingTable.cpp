@@ -4,6 +4,7 @@
 #include "ui/widgets.h"
 #include "ui/CellEditor.h"
 #include "ui/QuestionImages.h"
+#include "ui/ImageStore.h"   // focus-view inline image reference panel
 #include "model/Scoring.h"
 #include "imgui.h"
 #include "imgui_stdlib.h"
@@ -36,6 +37,7 @@ const char* gridShortcutsText()
         "Ctrl+Z / Y  undo / redo     Ctrl+S  save\n"
         "Right-drag  paint full marks across a row/column\n"
         "Ctrl+wheel  zoom the grid\n"
+        "F3          Focus view (one question) <-> Grid; in focus Left/Right = switch question\n"
         "Header      click = images; Ctrl/Shift+click = select columns;\n"
         "            right-click = fold / size-to-fit menu (folded = locked)\n"
         "Notes (in the cell editor): Ctrl+Left-Shift = LTR, Ctrl+Right-Shift = RTL";
@@ -344,8 +346,11 @@ void renderInlineEdit(App& app, int i, int j)
         if (changed) app.markDirty();
         app.gridEditing = false;
         app.gridEditPageActive = false;
-        if (tab) { if (app.activeCol < M - 1) ++app.activeCol; }
-        else     { if (app.activeRow < N - 1) ++app.activeRow; }
+        // Grid: Tab -> next question (right), Enter -> next student (down). Focus:
+        // Left/Right + the < > stepper own question switching, so Tab walks students
+        // too (type/Tab/type/Tab down the column) instead of jumping sideways.
+        if (tab && !app.focusMode) { if (app.activeCol < M - 1) ++app.activeCol; }
+        else                       { if (app.activeRow < N - 1) ++app.activeRow; }
         app.gridScrollToActive = true;
     }
 }
@@ -380,7 +385,7 @@ void applyFullRange(App& app, int anchorRow, int anchorCol, int hr, int hc, int 
     auto paint = [&](int r, int cIdx) {
         if (r < 0 || r >= nStudents || cIdx < 0 || cIdx >= nQuestions) return;
         if (p.students[static_cast<size_t>(r)].noSubmission) return;
-        if (p.questions[static_cast<size_t>(cIdx)].folded) return; // locked column
+        if (!app.focusMode && p.questions[static_cast<size_t>(cIdx)].folded) return; // locked column (grid only)
         gt::Cell& cell = p.students[static_cast<size_t>(r)].cells[static_cast<size_t>(cIdx)];
         // Only flip fullTick; leave `touched`/awarded alone so un-fulling a blank
         // cell returns it to blank (full cells count regardless of `touched`).
@@ -502,6 +507,7 @@ void handleGridKeyboard(App& app)
     // Folded columns are "put away & locked": navigation skips over them and the
     // selection never rests on one (while any unfolded column remains).
     auto isFolded = [&](int col) {
+        if (app.focusMode) return false; // focus ignores folding: any question is focusable/editable
         return col >= 0 && col < M && p.questions[static_cast<size_t>(col)].folded;
     };
     auto stepCol = [&](int dir) {                 // move c to the next unfolded column
@@ -828,6 +834,99 @@ void columnMenuPopup(App& app)
 
 } // namespace
 
+// Focus view: one question at a time as a tall student list, with a left-hand
+// reference panel showing that question's attached image(s). Reuses the grid's
+// cell renderers (they key off activeRow/activeCol, not the table geometry) in a
+// dedicated 3-column table (ID | question | Total) with a built-in header row and a
+// stretch question column, so none of the grid's custom-header / reflow / column-
+// width machinery is involved. `tableSize.y` leaves room for the status bar, same
+// as the grid table. See spec §9d.
+void focusView(App& app, const ImVec2& tableSize)
+{
+    gt::Project& p = app.project;
+    const int N = static_cast<int>(p.students.size());
+    const int M = static_cast<int>(p.questions.size());
+    if (M == 0) return;
+    const int col = std::clamp(app.activeCol, 0, M - 1); // == activeCol (clamped in handleGridKeyboard)
+
+    // ---- left: image reference panel (fit-to-width; use "Images" for zoom/pan) ----
+    const float panelW = ImGui::GetContentRegionAvail().x * 0.38f;
+    ImGui::BeginChild("focusref", ImVec2(panelW, tableSize.y), ImGuiChildFlags_Borders);
+    {
+        const gt::Question& fq = p.questions[static_cast<size_t>(col)];
+        if (fq.images.empty()) {
+            ImGui::TextDisabled("No reference image.");
+            ImGui::TextDisabled("Click \"Images\" to attach one.");
+        }
+        for (const gt::QuestionImage& im : fq.images) {
+            if (!im.caption.empty()) ImGui::TextUnformatted(im.caption.c_str());
+            const std::string abs = app.assetsDir.empty() ? im.file : app.assetsDir + "/" + im.file;
+            const Tex tex = imageStoreGet(abs); // lazy-load + cache (gt::ui)
+            if (tex.ok && tex.w > 0) {
+                const float availX = ImGui::GetContentRegionAvail().x;
+                const float z = availX / static_cast<float>(tex.w); // fit to panel width
+                ImGui::Image(tex.id, ImVec2(tex.w * z, tex.h * z));
+            } else {
+                ImGui::TextDisabled("(image unavailable: %s)", im.file.c_str());
+            }
+            ImGui::Spacing();
+        }
+    }
+    ImGui::EndChild();
+    ImGui::SameLine();
+
+    // ---- right: the focused-question student list ----
+    ImGui::BeginChild("focuslist", ImVec2(0.0f, tableSize.y));
+    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * app.gridZoom); // keep Ctrl+wheel zoom
+
+    const ImGuiTableFlags fflags =
+        ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY |
+        ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_HighlightHoveredColumn;
+
+    if (ImGui::BeginTable("focusgrid", 3, fflags)) { // 3 cols: ID | question | Total
+        ImGui::TableSetupScrollFreeze(0, 1);         // freeze the header row
+        ImGui::TableSetupColumn("ID", ImGuiTableColumnFlags_WidthFixed, 64.0f);
+        const std::string qh = questionHeaderLabel(p, col);
+        ImGui::TableSetupColumn(qh.c_str(), ImGuiTableColumnFlags_WidthStretch); // big readable column
+        ImGui::TableSetupColumn("Total", ImGuiTableColumnFlags_WidthFixed, 92.0f);
+        ImGui::TableHeadersRow(); // built-in header: no custom PushID pitfall (spec §10)
+
+        ImGuiListClipper clipper;
+        clipper.Begin(N);
+        if (app.activeRow >= 0 && app.activeRow < N)
+            clipper.IncludeItemByIndex(app.activeRow); // force-render active row (outline/scroll)
+        while (clipper.Step()) {
+            for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; ++i) {
+                gt::Student& s = p.students[static_cast<size_t>(i)];
+                ImGui::TableNextRow();
+                if (s.noSubmission)
+                    ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, kNoSubRowBg);
+
+                ImGui::TableSetColumnIndex(0);
+                renderIdCell(app, i);
+
+                ImGui::TableSetColumnIndex(1);
+                if (app.gridEditing && i == app.activeRow && !s.noSubmission)
+                    renderInlineEdit(app, i, col);          // always the focused column
+                else
+                    renderGradeCell(app, i, col);           // never renderFoldedCell in focus
+
+                ImGui::TableSetColumnIndex(2);
+                ImGui::AlignTextToFramePadding();
+                if (s.noSubmission)
+                    ImGui::TextColored(kMutedText, "0 / %s", fmtNum(gt::projectMaxTotal(p)).c_str());
+                else
+                    ImGui::Text("%s / %s",
+                                fmtNum(gt::studentTotal(p, static_cast<size_t>(i))).c_str(),
+                                fmtNum(gt::projectMaxTotal(p)).c_str());
+            }
+        }
+        ImGui::EndTable();
+    }
+    ImGui::PopFont();
+    ImGui::EndChild();
+}
+
 void gradingScreen(App& app)
 {
     gt::Project& p = app.project;
@@ -850,6 +949,9 @@ void gradingScreen(App& app)
     ImGui::SameLine();
     if (ImGui::SmallButton("Stats"))   ImGui::OpenPopup("Class Stats");
     ImGui::SameLine();
+    if (ImGui::SmallButton(app.focusMode ? "Grid view" : "Focus view")) // F3 also toggles (App::render)
+        app.focusMode = !app.focusMode;
+    ImGui::SameLine();
     ImGui::TextDisabled("|");
     ImGui::SameLine();
     const gt::ClassStats st = gt::classStats(p);
@@ -859,6 +961,34 @@ void gradingScreen(App& app)
                         fmtNum(st.minScore).c_str(), fmtNum(st.maxScore).c_str(),
                         fmtNum(gt::projectMaxTotal(p)).c_str());
     renderStatsPopup(app);
+
+    // Focus toolbar: question stepper + Images + per-question progress. `st` (above)
+    // supplies the submitted count. Drawn at 1x (outside the grid's zoom PushFont).
+    if (app.focusMode && !p.questions.empty()) {
+        const int Mq = static_cast<int>(p.questions.size());
+        app.activeCol = std::clamp(app.activeCol, 0, Mq - 1);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextDisabled("Focus:");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(app.activeCol <= 0);
+        if (ImGui::ArrowButton("##focusprev", ImGuiDir_Left))  { --app.activeCol; app.gridScrollToActive = true; }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::Text("%s  (%d of %d)", questionHeaderLabel(p, app.activeCol).c_str(), app.activeCol + 1, Mq);
+        ImGui::SameLine();
+        ImGui::BeginDisabled(app.activeCol >= Mq - 1);
+        if (ImGui::ArrowButton("##focusnext", ImGuiDir_Right)) { ++app.activeCol; app.gridScrollToActive = true; }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Images")) { app.imageMenuQuestion = app.activeCol; app.requestOpenImageMenu = true; }
+        ImGui::SameLine();
+        int graded = 0;
+        for (const gt::Student& s : p.students)
+            if (!s.noSubmission && (s.cells[static_cast<size_t>(app.activeCol)].touched ||
+                                    s.cells[static_cast<size_t>(app.activeCol)].fullTick))
+                ++graded;
+        ImGui::TextDisabled("graded %d / %d", graded, st.submitted);
+    }
 
     // Keyboard-first grading: move the selection / begin inline entry / act on the
     // active cell. Before BeginTable so the changes take effect this frame.
@@ -883,12 +1013,19 @@ void gradingScreen(App& app)
         io.MouseWheel = 0.0f;
     }
 
+    const ImVec2 tableSize(0.0f, -ImGui::GetFrameHeightWithSpacing());
+
+    // One question at a time: the focus view replaces the M-column grid. Everything
+    // outside this branch (toolbar, keyboard handler, paint gesture, status bar,
+    // popups) is shared, so the two views differ only in the table draw. See spec §9d.
+    if (app.focusMode) {
+        focusView(app, tableSize);
+    } else {
+
     const ImGuiTableFlags flags =
         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX |
         ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit |
         ImGuiTableFlags_HighlightHoveredColumn;
-
-    const ImVec2 tableSize(0.0f, -ImGui::GetFrameHeightWithSpacing());
 
     // Per-view zoom: scale the grid's font (rows/cells derive their height from it);
     // column widths are scaled explicitly below. Toolbar/status bar stay normal size.
@@ -1051,14 +1188,19 @@ void gradingScreen(App& app)
         ImGui::EndTable();
     }
     ImGui::PopFont(); // end per-view zoom
+    } // end grid-view branch
 
-    // Resolve the left-click / drag-to-paint full-marks gesture for this frame.
+    // Resolve the right-click / drag-to-paint full-marks gesture for this frame
+    // (works in both views: g_cellRects holds whichever cells were drawn).
     handlePaintGesture(app);
 
     // ---- status bar ----
-    ImGui::TextDisabled("%s", app.statusMsg.empty()
-        ? "Arrows move; type or +/- for points; Space opens edit (Space again or p = last page); Enter/Tab commit; e/F2 editor; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+S saves.  F1 shortcuts."
-        : app.statusMsg.c_str());
+    const char* gridHint =
+        "Arrows move; type or +/- for points; Space opens edit (Space again or p = last page); Enter/Tab commit; e/F2 editor; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+S saves.  F1 shortcuts.";
+    const char* focusHint =
+        "Focus: Up/Down = student; Left/Right or the < > buttons = switch question; type/+/-/Space/f/n/Del edit as usual; Enter/Tab = next student; F3 = grid view.";
+    ImGui::TextDisabled("%s", !app.statusMsg.empty() ? app.statusMsg.c_str()
+                              : (app.focusMode ? focusHint : gridHint));
 
     // ---- popups (opened here, after the table, using stored targets) ----
     if (app.requestOpenCellEditor) {

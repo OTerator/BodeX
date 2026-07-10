@@ -140,7 +140,16 @@ BODEX_DEMO=1 ./build/BodeX.exe
    columns to fit*, *Fold* / *Unfold*. **Ctrl+click** (or **Shift+click** for a range)
    headers to select several, then *Fold selected*. Click a folded header to unfold it.
    Folds and column widths are saved with the project.
-7. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
+7. **Focus on one question.** Click **Focus view** (or press **F3**) to grade a
+   single question as a tall, readable list of every student — the way you actually
+   grade: one question all the way down, then the next. **Up/Down** move between
+   students, **Left/Right** (or the `< >` buttons) switch questions, and a **graded
+   X / Y** counter tracks your progress through the current question. That question's
+   reference image(s) show in a panel on the left (attach them with **Images**), so
+   you can score against the sheet without opening a separate window. All the same
+   per-cell keys apply — type a score, `+`/`-`, `f`, `n`, Space, `Del` — and Enter or
+   Tab moves to the next student. Press **F3** again for the full grid.
+8. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
    with unsaved changes prompts to Save / Discard / Cancel. In between saves, unsaved
    work is **autosaved** every ~30s (and when you switch away or quit); if BodeX
    closes unexpectedly, the next launch offers to **recover** it. Autosave is a safety

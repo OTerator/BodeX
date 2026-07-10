@@ -102,6 +102,7 @@ public:
     // per-question `folded`/`viewWidth` live on the model (persisted). See GradingTable.
     float             gridZoom = 1.0f;       // per-view grid scale (Ctrl+scroll)
     bool              gridReflow = false;    // force column widths this frame (zoom/fold/fit)
+    bool              focusMode = false;     // session-only one-question focus view (lifecycle mirrors gridZoom)
     std::vector<char> headerSel;             // per-question header multi-select mask
     int               headerSelAnchor = -1;  // Shift+click range anchor
     int               colMenuQuestion = -1;  // right-clicked header -> ColumnMenu target

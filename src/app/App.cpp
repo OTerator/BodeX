@@ -156,6 +156,10 @@ void App::render()
                 ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z))
                 redo();
         }
+        // F3 toggles the one-question Focus view (same gate: not mid-edit / mid-popup).
+        if (screen == Screen::Grading && !gridEditing && !anyPopup &&
+            ImGui::IsKeyPressed(ImGuiKey_F3, false))
+            focusMode = !focusMode;
     }
 
     // The bare grading grid drives its own keyboard (arrows/Tab/type-to-edit), so
@@ -528,6 +532,7 @@ void App::resetColumnView()
 {
     gridZoom = 1.0f;
     gridReflow = true;          // first frame forces widths from the loaded grid
+    focusMode = false;          // start every project in the grid view
     headerSel.clear();
     headerSelAnchor = -1;
     colMenuQuestion = -1;

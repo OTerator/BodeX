@@ -40,9 +40,16 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 - **Grades export** — CSV first, then match the Excel/Moodle format the user will
   provide (per-student total + per-question breakdown). Planned as `File → Export…`.
   *Do not implement until the format is given.*
-- **Question-by-question focus mode** — grade one question for all students, then
-  the next, with next/prev-student navigation (matches how the user grades; the
-  "last page" markers exist for exactly this).
+- ~~**Question-by-question focus mode**~~ — **done:** a **Focus view** (toolbar
+  toggle or **F3**) grades one question at a time as a tall student list — Up/Down
+  walk students, Left/Right (or a `< >` stepper) switch questions, with a
+  `graded X / Y` progress counter and an inline **reference-image panel** on the left
+  (the focused question's screenshots, fit-to-width). It reuses the grid's cell
+  renderers / keyboard handler verbatim (`activeCol` *is* the focused question), so
+  all per-cell editing and paint/zoom work unchanged; folding is bypassed in focus so
+  any question is editable. Session-only (`App::focusMode`, mirrors `gridZoom`) — no
+  schema/serialization/test change. This also partially delivers the deferred
+  "pinned preview / right-side split" idea below. See spec.md §9d.
 - ~~**Keyboard-first grading + inline quick-entry**~~ — **done:** a selected cell
   (blue outline) moves with the arrow keys; type a number for inline awarded-points
   entry (Enter/Tab commit + advance, Esc cancels); `f` full marks, `n`

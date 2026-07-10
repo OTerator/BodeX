@@ -709,6 +709,54 @@ font is ASCII-only. So the feature is these cooperating pieces:
   direction override, toggled with **Ctrl+Left-Shift / Ctrl+Right-Shift** while focused
   (`Auto` = first strong char). The grid hover **tooltip** reuses `gt::ui::noteVisual`.
 
+## 9d. Focus view (one question at a time)
+
+**Grade one question down every student, then the next** — the way the grader
+actually works (the `lastPage` markers exist for exactly this). `App::focusMode`
+(session-only, like `gridZoom`) flips `gradingScreen` between the M-column grid and
+a focused single-question view. Toggle with the **Focus view / Grid view** toolbar
+button or **F3** (F3 handled at app level in `App::render`, gated `!gridEditing &&
+!anyPopup`; letters are all taken and `c` is reserved for a future quick-note).
+Reset in `App::resetColumnView` (so every new/open/close/restore starts in the grid).
+
+- **Shared vs branched.** Everything in `gradingScreen` is shared — the toolbar,
+  `handleGridKeyboard`, the Ctrl+wheel zoom detector, `handlePaintGesture`, the
+  status bar, and all popups — **except the table draw**, which branches on
+  `focusMode`. So the two views differ only in layout; all editing/keys/paint/zoom
+  behave identically.
+- **The focus table (`focusView`)** is a **dedicated** block, *not* a parametrized
+  grid: a 3-column table `ID | question | Total` using the **built-in**
+  `TableHeadersRow()` and a `WidthStretch` question column. That deliberately avoids
+  every grid-table hazard — the custom-header `PushID` mirroring (§10 heap
+  corruption), the `TableSetColumnWidth` reflow + `MinColumnWidth==0` assert, and the
+  column-width drag readback. None of that machinery runs in focus. It reuses
+  `renderGradeCell` / `renderInlineEdit` / `renderIdCell` unchanged (they key off
+  `activeRow`/`activeCol`, not table geometry) and wraps the table in the same
+  `PushFont(nullptr, FontSizeBase * gridZoom)` so Ctrl+wheel zoom still works.
+- **Navigation.** `activeCol` *is* the focused question; Left/Right/Tab (in
+  `handleGridKeyboard`) switch it, and a toolbar stepper `< [title /max] (j of M) >`
+  does the same by mouse. Up/Down/Enter walk students. A per-question progress
+  readout (`graded X / submitted`, an O(N) count of `!noSubmission && (touched ||
+  fullTick)` in the focused column) and an **Images** button (reuses the
+  `requestOpenImageMenu` path for `activeCol`) sit in the focus toolbar row.
+- **Inline reference image panel.** A left-hand child region draws the focused
+  question's attached image(s) fit-to-width via `imageStoreGet` + `app.assetsDir`
+  (same path assembly as `drawPreview`, §9b); empty questions show a hint. It's a
+  quick reference only — zoom/pan still use the floating previews (via **Images**).
+  The panel pushes no `g_cellRects`, so the paint gesture can't reach it.
+- **Folding is bypassed in focus** so any question is focusable/editable: two
+  one-liners — `handleGridKeyboard`'s `isFolded` lambda returns `false` when
+  `focusMode` (Left/Right walk *all* questions, nothing is `locked`), and
+  `applyFullRange`'s folded guard is `!focusMode && …folded` (right-drag paints a
+  focused-but-folded column consistently with the click toggle). `focusView` never
+  calls `renderFoldedCell`. Grid-mode behavior is byte-for-byte unchanged; exiting
+  focus onto a folded column snaps the cursor off it next frame as before.
+- **Tab in focus commits to the next *student*** (like Enter), not the next question
+  — the stepper/Left-Right already own question switching (`renderInlineEdit`:
+  `if (tab && !focusMode)` advances the column, else the row).
+- **No model/serialization/test change** — `focusMode` is a session-only `App` flag,
+  so no `schemaVersion` bump and no new `test_core` cases (mirrors `gridZoom`).
+
 ## 10. ImGui 1.92 specifics & gotchas
 
 - Vendored ImGui is **1.92.9 (master)** with matching win32 + dx11 backends and
