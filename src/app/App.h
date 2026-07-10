@@ -121,6 +121,7 @@ public:
 
     // Transient "Add image" form (inside the image menu popup).
     std::string       addImagePendingFile; // picked source path awaiting confirm
+    bool              addImagePasteTemp = false; // pending file is a clipboard temp (delete after)
     int               addImageRole = 0;     // 0 = Question, 1 = Solution
     std::string       addImageCaption;
     std::vector<char> addImageSubs;         // per sub-question checkbox state

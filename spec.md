@@ -135,7 +135,8 @@ src/
                          portable UTF-8<->codepoint helpers. GUI-free, unit-tested (§9c).
   model/Serialization.*  Project <-> JSON (nlohmann) + UTF-8 file I/O. GUI-free.
   model/AppConfig.*      %APPDATA%\BodeX paths, recent-projects config, nowIso().
-  model/Assets.{h,cpp}   Question-image asset dirs + copy/migrate. GUI-free (Win32 file ops).
+  model/Assets.{h,cpp}   Question-image asset dirs + copy/migrate + clipboard paste
+                         (CF_DIB->BMP, CF_HDROP). GUI-free (Win32 file ops).
   util/utf.h             UTF-8 <-> UTF-16 helpers (header-only, inline).
 tests/test_core.cpp      Non-GUI tests: scoring, JSON/file round-trip, recent alias.
 third_party/
@@ -656,11 +657,32 @@ in **non-modal windows** (`imagePreviewWindows`) that stay open beside the grid.
   app impossible to close (the X button, Ctrl+N/O and File → Exit all route through
   that modal). Previews stay in `App::previews` and reappear once it closes.
 
+- **Paste from clipboard (Ctrl+V):** attach a screenshot without the file dialog.
+  Two entry points, both routing through **`gt::ui::beginPasteImage(app, qi)`**
+  (`QuestionImages.cpp`): a **"Paste (Ctrl+V)"** button beside "Add image…" (plus
+  Ctrl+V *while the popup is open*, gated on `!IsAnyItemActive()` so the caption
+  field's own text-paste still works), and a **grid-level Ctrl+V** in
+  `handleGridKeyboard` that pastes onto the **active** question (`activeCol`, so it
+  works in grid *and* Focus view) and opens its image menu with the pending image.
+  `beginPasteImage` calls **`gt::clipboardImageToTempFile(appDataDir())`** (`Assets.cpp`):
+  a clipboard **`CF_DIB`** bitmap is wrapped into a `.bmp` by the pure, unit-tested
+  **`buildBmpFromDib`** (`Assets.h`) — prepend the 14-byte `BITMAPFILEHEADER`, no
+  pixel conversion — and written to a fixed temp `clip_paste.bmp`; a copied image
+  **file** (`CF_HDROP`) yields that path instead. **Why BMP:** stb already decodes
+  it, so there's no `stb_image_write`/WIC dep and no top-down/BGR/stride handling,
+  and it dodges the *CF_DIB 32-bit alpha=0* transparency trap (a `BI_RGB` DIB has no
+  alpha mask → stb forces opaque). The temp then drives the **existing** "New image"
+  form + `importImage` copy verbatim (`App::addImagePasteTemp` marks it a throwaway,
+  shown as "(pasted from clipboard)" and `removeFile`d on Add/Cancel). No model /
+  schema / serialization change — a pasted image is just another `img-*.bmp` asset.
+  *(BMP is uncompressed; a PNG re-encode for smaller files is parked in NOTES — the
+  store accepts any stb-decodable format, so the encoder swap stays localized.)*
 - **Storage (copy-beside-project):** files live in `<project>.assets/` next to the
   `.json`; before first save they stage in `%APPDATA%\BodeX\staging\<id>\`.
   `App::assetsDir` is the current live dir. `Assets.{h,cpp}` provides
   `liveAssetsDir`, `projectAssetsDir`, `stagingAssetsDir`, `importImage` (copy in),
-  and `syncImages` (migrate on Save / Save As). `doSave()` migrates staged files
+  `clipboardImageToTempFile` / `buildBmpFromDib` (the paste path above), and
+  `syncImages` (migrate on Save / Save As). `doSave()` migrates staged files
   into `<project>.assets/`. `closeProject`/`applyLoadedProject` call
   `imageStoreReleaseAll()`.
 - **Textures:** `ImageStore` (`ui/ImageStore.*`) decodes with stb_image
@@ -810,7 +832,8 @@ Reset in `App::resetColumnView` (so every new/open/close/restore starts in the g
 - Breaking model change → bump `Project::schemaVersion` and handle old files in
   `projectFromJsonString`.
 - **Question images:** metadata in `model/Project.h` (`QuestionImage`) +
-  `Serialization.cpp`; file storage in `model/Assets.*`; GPU textures in
+  `Serialization.cpp`; file storage in `model/Assets.*` (incl. the Ctrl+V clipboard
+  paste — `clipboardImageToTempFile` / `buildBmpFromDib`, §9b); GPU textures in
   `ui/ImageStore.*`; UI in `ui/QuestionImages.*` and the `GradingTable` header.
   Keep `App::assetsDir` and the `doSave()` asset-migration in sync if you change
   where files live.
@@ -821,12 +844,13 @@ Reset in `App::resetColumnView` (so every new/open/close/restore starts in the g
 
 ## 12. Verifying changes (do this, don't just build)
 
-- **Core logic:** `mingw32-make test` (255 checks: scoring rules incl. sub-question
+- **Core logic:** `mingw32-make test` (264 checks: scoring rules incl. sub-question
   sync, one-press `stepAwarded`, and `isFullMarks`, JSON string + on-disk round-trip,
   the per-question `folded`/`viewWidth` view state (§9), recent-alias regression,
-  `config <-> JSON` round-trip incl. the autosave record (§8c), plus `Cell`/`Student`
-  `operator==` and `firstGradingDiff` for the undo history — §8b). Add cases when you
-  touch model, scoring, or serialization.
+  `config <-> JSON` round-trip incl. the autosave record (§8c), `Cell`/`Student`
+  `operator==` and `firstGradingDiff` for the undo history (§8b), plus the pure
+  `buildBmpFromDib` clipboard-paste header math (§9b)). Add cases when you touch
+  model, scoring, or serialization.
 - **It builds:** `mingw32-make` with no warnings.
 - **GUI, visually:** the app is a real Win32 window; verify by screenshot. Launch
   with a demo mode and capture with **PrintWindow** (not screen-copy — a background

@@ -42,8 +42,10 @@ toolchain and needs no external libraries installed.
   the **question sheet** and **solution references** used to verify checks. Tag
   each image with the sub-question(s) it covers, and open previews in windows you
   keep beside the grid — several at once. **Scroll to flip** through a question's
-  images, **Ctrl+scroll / `+` `-`** to zoom, **drag** to pan. Images are copied
-  into an assets folder beside the project so they travel with it.
+  images, **Ctrl+scroll / `+` `-`** to zoom, **drag** to pan. **Ctrl+V pastes a
+  screenshot straight from the clipboard** (Snipping Tool, PrtScn, or a copied image
+  file) onto the selected question — no file dialog. Images are copied into an assets
+  folder beside the project so they travel with it.
 - **Saved as JSON** — one `.json` file per project; reopen it any time. Recent
   projects are remembered.
 - **Autosave & crash recovery** — unsaved edits are quietly autosaved every ~30s; if
@@ -165,8 +167,11 @@ the same way in the grid's hover tooltip.
 
 **Left-click** a **question's column header** to open its image menu — add / preview /
 remove the question sheet and solution-reference screenshots, each tagged to the
-sub-questions it covers. (Right-click the header for the column fold / size menu — see
-step 6.) Each **Preview** opens a separate, resizable window, and
+sub-questions it covers. Attach with **Add image…** (file dialog), the **Paste
+(Ctrl+V)** button, or just press **Ctrl+V** on the grid to drop a clipboard
+screenshot (or a copied image file) onto the selected question. (Right-click the
+header for the column fold / size menu — see step 6.) Each **Preview** opens a
+separate, resizable window, and
 you can keep several open beside the grid while you grade. Inside a preview:
 **mouse wheel** (or `< Prev` / `Next >`, or the arrow keys) flips through all of
 that question's images; **Ctrl+wheel** or the `+` / `-` buttons/keys zoom;

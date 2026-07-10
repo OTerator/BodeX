@@ -4,6 +4,7 @@
 #include "ui/ImageStore.h"
 #include "ui/platform_dialogs.h"
 #include "model/Assets.h"
+#include "model/AppConfig.h"  // appDataDir(), removeFile()
 #include "imgui.h"
 #include "imgui_stdlib.h"
 
@@ -84,6 +85,26 @@ int renderGroup(App& app, gt::Question& q, int qi, const char* header, gt::Image
 
 } // namespace
 
+bool beginPasteImage(App& app, int qi)
+{
+    if (qi < 0 || qi >= static_cast<int>(app.project.questions.size()))
+        return false;
+
+    const std::string tmp = gt::clipboardImageToTempFile(gt::appDataDir());
+    if (tmp.empty()) {
+        app.statusMsg = "No image on the clipboard.";
+        return false;
+    }
+
+    const gt::Question& q = app.project.questions[static_cast<size_t>(qi)];
+    app.addImagePendingFile = tmp;
+    app.addImagePasteTemp   = true;
+    app.addImageRole        = 0;
+    app.addImageCaption.clear();
+    app.addImageSubs.assign(static_cast<size_t>(q.subCount), 0);
+    return true;
+}
+
 void questionImagesPopup(App& app)
 {
     if (!ImGui::BeginPopup("QuestionImages"))
@@ -116,14 +137,25 @@ void questionImagesPopup(App& app)
             std::string path;
             if (gt::ui::openImageDialog(path, std::string())) {
                 app.addImagePendingFile = path;
+                app.addImagePasteTemp = false;
                 app.addImageRole = 0;
                 app.addImageCaption.clear();
                 app.addImageSubs.assign(static_cast<size_t>(q.subCount), 0);
             }
         }
+        ImGui::SameLine();
+        // Paste an image straight from the clipboard (Ctrl+V also works while this
+        // popup is open, unless a text field is focused so its own paste still runs).
+        if (ImGui::Button("Paste (Ctrl+V)") ||
+            (!ImGui::IsAnyItemActive() &&
+             ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_V)))
+            beginPasteImage(app, qi);
     } else {
         ImGui::SeparatorText("New image");
-        ImGui::TextDisabled("%s", app.addImagePendingFile.c_str());
+        if (app.addImagePasteTemp)
+            ImGui::TextDisabled("(pasted from clipboard)");
+        else
+            ImGui::TextDisabled("%s", app.addImagePendingFile.c_str());
 
         ImGui::RadioButton("Question image", &app.addImageRole, 0);
         ImGui::SameLine();
@@ -160,11 +192,18 @@ void questionImagesPopup(App& app)
             } else {
                 app.statusMsg = "Could not import image (copy failed).";
             }
+            if (app.addImagePasteTemp)
+                gt::removeFile(app.addImagePendingFile); // spent clipboard temp
             app.addImagePendingFile.clear();
+            app.addImagePasteTemp = false;
         }
         ImGui::SameLine();
-        if (ImGui::Button("Cancel"))
+        if (ImGui::Button("Cancel")) {
+            if (app.addImagePasteTemp)
+                gt::removeFile(app.addImagePendingFile);
             app.addImagePendingFile.clear();
+            app.addImagePasteTemp = false;
+        }
     }
 
     ImGui::Separator();

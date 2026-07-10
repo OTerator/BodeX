@@ -3,7 +3,9 @@
 #include "model/AppConfig.h"  // appDataDir()
 #include "util/utf.h"         // windows.h + UTF-8<->UTF-16
 
+#include <shellapi.h>         // DragQueryFileW (CF_HDROP)
 #include <cctype>
+#include <cstdio>
 
 namespace gt {
 
@@ -42,6 +44,11 @@ void ensureDir(const std::string& utf8)
 bool fileThere(const std::string& utf8)
 {
     return ::GetFileAttributesW(utf8_to_wide(utf8).c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+bool isImageExt(const std::string& ext)
+{
+    return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" ||
+           ext == ".gif" || ext == ".tga"  || ext == ".psd"  || ext == ".webp";
 }
 
 } // namespace
@@ -106,6 +113,53 @@ void syncImages(const std::string& fromDir, const std::string& newDir,
         const std::string src = fromDir + "/" + f;
         ::CopyFileW(utf8_to_wide(src).c_str(), utf8_to_wide(dest).c_str(), FALSE);
     }
+}
+
+std::string clipboardImageToTempFile(const std::string& tempDir)
+{
+    if (tempDir.empty() || !::OpenClipboard(nullptr))
+        return std::string();
+
+    std::string result;
+
+    // Prefer a bitmap (screenshots / snips). Windows synthesizes CF_DIB from
+    // CF_DIBV5, so requesting CF_DIB gives a plain BITMAPINFOHEADER form.
+    if (HANDLE h = ::GetClipboardData(CF_DIB)) {
+        if (const void* p = ::GlobalLock(h)) {
+            const SIZE_T n = ::GlobalSize(h);
+            std::vector<uint8_t> bmp;
+            if (n > 0 &&
+                buildBmpFromDib(static_cast<const uint8_t*>(p), static_cast<size_t>(n), bmp)) {
+                ensureDir(tempDir);
+                const std::string dest = tempDir + "/clip_paste.bmp";
+                if (FILE* f = ::_wfopen(utf8_to_wide(dest).c_str(), L"wb")) {
+                    const size_t wrote = std::fwrite(bmp.data(), 1, bmp.size(), f);
+                    std::fclose(f);
+                    if (wrote == bmp.size())
+                        result = dest;
+                }
+            }
+            ::GlobalUnlock(h);
+        }
+    }
+
+    // Otherwise accept a copied image file (Explorer "Copy" -> CF_HDROP).
+    if (result.empty()) {
+        if (HANDLE h = ::GetClipboardData(CF_HDROP)) {
+            HDROP drop = static_cast<HDROP>(h);
+            if (::DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0) > 0) {
+                UINT len = ::DragQueryFileW(drop, 0, nullptr, 0);
+                std::wstring w(len, L'\0');
+                ::DragQueryFileW(drop, 0, w.data(), len + 1);
+                const std::string path = wide_to_utf8(w);
+                if (isImageExt(extOf(path)))
+                    result = path;
+            }
+        }
+    }
+
+    ::CloseClipboard();
+    return result;
 }
 
 } // namespace gt

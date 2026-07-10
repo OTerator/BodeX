@@ -4,7 +4,10 @@
 
 #include <cstdio>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <string>
+#include <vector>
 #include <initializer_list>
 
 #include "model/Project.h"
@@ -12,6 +15,7 @@
 #include "model/Serialization.h"
 #include "model/AppConfig.h"
 #include "model/Bidi.h"
+#include "model/Assets.h"  // buildBmpFromDib (header-inline, pure)
 
 static int g_failures = 0;
 static int g_checks = 0;
@@ -763,6 +767,55 @@ static void testBidi()
     }
 }
 
+// The pure DIB->BMP wrapper used by the clipboard-paste path (Assets.h). Feed a
+// hand-built BITMAPINFOHEADER DIB and check the prepended 14-byte file header.
+static void testBmpFromDib()
+{
+    // 40-byte BITMAPINFOHEADER, 2x2, 24bpp, BI_RGB, then 16 bytes of pixel data
+    // (2 rows * (2px*3B = 6, padded to 8B) = 16). No palette, no masks.
+    std::vector<uint8_t> dib(40 + 16, 0);
+    auto put32 = [&](size_t o, uint32_t v) {
+        dib[o] = v & 0xFF; dib[o+1] = (v>>8)&0xFF; dib[o+2] = (v>>16)&0xFF; dib[o+3] = (v>>24)&0xFF;
+    };
+    auto put16 = [&](size_t o, uint16_t v) { dib[o] = v & 0xFF; dib[o+1] = (v>>8)&0xFF; };
+    put32(0, 40);          // biSize
+    put32(4, 2);           // biWidth
+    put32(8, 2);           // biHeight
+    put16(12, 1);          // biPlanes
+    put16(14, 24);         // biBitCount
+    put32(16, 0);          // biCompression = BI_RGB
+    for (size_t i = 40; i < dib.size(); ++i) dib[i] = static_cast<uint8_t>(i); // marker pixels
+
+    std::vector<uint8_t> bmp;
+    CHECK(buildBmpFromDib(dib.data(), dib.size(), bmp));
+    CHECK(bmp.size() == 14 + dib.size());
+    CHECK(bmp[0] == 'B' && bmp[1] == 'M');
+
+    auto get32 = [&](size_t o) {
+        return static_cast<uint32_t>(bmp[o]) | (static_cast<uint32_t>(bmp[o+1])<<8) |
+               (static_cast<uint32_t>(bmp[o+2])<<16) | (static_cast<uint32_t>(bmp[o+3])<<24);
+    };
+    CHECK(get32(2) == 14 + dib.size());  // bfSize
+    CHECK(get32(10) == 54);              // bfOffBits = 14 + 40, no palette/masks
+    CHECK(std::memcmp(bmp.data() + 14, dib.data(), dib.size()) == 0); // DIB appended verbatim
+
+    // A too-small buffer is rejected.
+    std::vector<uint8_t> tiny(8, 0), out;
+    CHECK(!buildBmpFromDib(tiny.data(), tiny.size(), out));
+
+    // 8bpp with a 256-entry palette pushes bfOffBits past the header.
+    std::vector<uint8_t> pal(40 + 256*4 + 4, 0);
+    pal[0] = 40;           // biSize
+    pal[14] = 8;           // biBitCount = 8 (low byte; biClrUsed left 0 => 1<<8 = 256)
+    std::vector<uint8_t> pbmp;
+    CHECK(buildBmpFromDib(pal.data(), pal.size(), pbmp));
+    auto pget32 = [&](size_t o) {
+        return static_cast<uint32_t>(pbmp[o]) | (static_cast<uint32_t>(pbmp[o+1])<<8) |
+               (static_cast<uint32_t>(pbmp[o+2])<<16) | (static_cast<uint32_t>(pbmp[o+3])<<24);
+    };
+    CHECK(pget32(10) == 14u + 40u + 256u*4u); // header + 256-color palette
+}
+
 int main()
 {
     testScoring();
@@ -783,6 +836,7 @@ int main()
     testGradingEquality();
     testFirstGradingDiff();
     testBidi();
+    testBmpFromDib();
 
     std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
     if (g_failures == 0)

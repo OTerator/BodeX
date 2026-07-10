@@ -35,6 +35,7 @@ const char* gridShortcutsText()
         "Del         clear the cell\n"
         "Enter/Tab   commit (down / right); Esc cancels\n"
         "Ctrl+Z / Y  undo / redo     Ctrl+S  save\n"
+        "Ctrl+V      paste a clipboard image onto the active question\n"
         "Right-drag  paint full marks across a row/column\n"
         "Ctrl+wheel  zoom the grid\n"
         "F3          Focus view (one question) <-> Grid; in focus Left/Right = switch question\n"
@@ -498,6 +499,17 @@ void handleGridKeyboard(App& app)
     // are handled in renderInlineEdit).
     if (app.gridEditing)
         return;
+
+    // Ctrl+V pastes a clipboard image into the active question: open its image menu
+    // with the "New image" form pre-filled (same as Add image -> file dialog). Works
+    // identically in grid and Focus view (activeCol is the focused question).
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_V)) {
+        if (beginPasteImage(app, app.activeCol)) {
+            app.imageMenuQuestion = app.activeCol;
+            app.requestOpenImageMenu = true;
+        }
+        return;
+    }
 
     ImGuiIO& io = ImGui::GetIO();
     int& r = app.activeRow;
@@ -1196,9 +1208,9 @@ void gradingScreen(App& app)
 
     // ---- status bar ----
     const char* gridHint =
-        "Arrows move; type or +/- for points; Space opens edit (Space again or p = last page); Enter/Tab commit; e/F2 editor; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+S saves.  F1 shortcuts.";
+        "Arrows move; type or +/- for points; Space opens edit (Space again or p = last page); Enter/Tab commit; e/F2 editor; f full; n no-sub; Del clear.  Right-drag paints full marks.  Ctrl+V pastes an image.  Ctrl+S saves.  F1 shortcuts.";
     const char* focusHint =
-        "Focus: Up/Down = student; Left/Right or the < > buttons = switch question; type/+/-/Space/f/n/Del edit as usual; Enter/Tab = next student; F3 = grid view.";
+        "Focus: Up/Down = student; Left/Right or the < > buttons = switch question; type/+/-/Space/f/n/Del edit as usual; Ctrl+V pastes an image; Enter/Tab = next student; F3 = grid view.";
     ImGui::TextDisabled("%s", !app.statusMsg.empty() ? app.statusMsg.c_str()
                               : (app.focusMode ? focusHint : gridHint));
 

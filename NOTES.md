@@ -136,7 +136,21 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 - **Grade distribution histogram.**
 
 **Images (extend the current feature)**
-- **Paste screenshot from clipboard (Ctrl+V)** to attach without a file dialog.
+- ~~**Paste screenshot from clipboard (Ctrl+V)**~~ — **done:** attach a screenshot
+  without the file dialog. A **"Paste (Ctrl+V)"** button in the image popup, and a
+  grid-level **Ctrl+V** that pastes onto the active question (works in grid + Focus
+  view) and opens its image menu with the pasted image pending. A clipboard bitmap
+  (`CF_DIB`) is wrapped into a `.bmp` by the pure/unit-tested `buildBmpFromDib`
+  (prepend the `BITMAPFILEHEADER` — no pixel conversion, no `stb_image_write`/WIC
+  dep, and it dodges the *CF_DIB 32-bit alpha=0* transparency trap since `BI_RGB`
+  has no alpha mask); a copied image **file** (`CF_HDROP`) is taken as-is. It reuses
+  the existing "New image" form + `importImage` via a throwaway temp
+  (`clipboardImageToTempFile`, `App::addImagePasteTemp`). No schema change. See
+  spec.md §9b.
+  - *Future polish:* re-encode the pasted bitmap as **PNG** for much smaller assets
+    (BMP is uncompressed — a full-screen paste is ~MBs). The store accepts any
+    stb-decodable format, so the encoder swap is localized (vendor `stb_image_write`
+    or use WIC, then write via a `_wfopen` callback for Unicode paths).
 - ~~Side-by-side previews (question + its solution together)~~ — **done:** previews
   are multiple non-modal windows now (`App::previews`); open both and place them
   side by side.
