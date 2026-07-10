@@ -158,14 +158,20 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
   per-question rubric notes at config time, and the **notes font / default text
   direction** (see the Hebrew/BiDi notes work). A top-bar entry that opens a
   persistent config (extend `AppConfig`).
-- **Ctrl+scroll to zoom the grid** — hold Ctrl and mouse-wheel over the grid to
-  scale it (row height, column widths, cell font) via a per-view zoom factor,
-  independent of the monitor-DPI `style.FontScaleMain`. Especially useful on a
-  second monitor whose resolution/DPI differs from the primary.
+- ~~**Ctrl+scroll to zoom the grid**~~ — **done:** hold Ctrl and mouse-wheel over the
+  grid to scale it (row height, column widths, cell font) via a per-view `App::gridZoom`
+  (0.5–2.5×), independent of the monitor-DPI factor. The table wraps in
+  `PushFont(nullptr, style.FontSizeBase * gridZoom)` — using **`FontSizeBase`, not
+  `GetFontSize()`**, so `FontScaleMain` isn't applied twice (that bug rendered the grid
+  1.5× oversized and threw off size-to-fit). Session-only. See spec.md §9.
 
 **Smaller polish**
 - Search / jump to a student ID.
-- Per-question column show/hide & reorder.
+- ~~Per-question column **fold** (show/hide)~~ — **done:** columns fold to a narrow,
+  interaction-**locked** strip that still shows a compact score, one at a time or a
+  Ctrl/Shift-selected set, persisted per-question. Plus **size-to-fit** (per column /
+  all) that actually measures cell content. Column **reorder** is still parked. See
+  spec.md §9.
 - Compact-cell eliding for very long `lastPage` values (middle-elide / tooltip).
 - Settings screen — see **Settings & display → Settings menu** above.
 - CSV/Excel *import* of a roster.

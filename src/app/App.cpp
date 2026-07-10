@@ -328,6 +328,7 @@ void App::createProjectFromDraft()
     draft.syncQuestions();
     project = gt::makeProject(draft.name, draft.studentCount, draft.questions);
     project.createdIso = gt::nowIso();
+    resetColumnView();            // fresh selection/zoom for the new grid
     hasProject = true;
     projectPath.clear();
     dirty = true;                 // new, unsaved
@@ -367,6 +368,7 @@ void App::applyLoadedProject(gt::Project&& p, const std::string& path)
     gridEditScoreDirty = false;
     gridEditSuppressSpace = false;
     project = std::move(p);
+    resetColumnView();              // zoom/selection reset; force loaded column widths
     hasProject = true;
     projectPath = path;
     dirty = false;
@@ -443,6 +445,7 @@ void App::closeProject()
     gridEditPageActive = false;
     gridEditScoreDirty = false;
     gridEditSuppressSpace = false;
+    resetColumnView();
     resetHistory();
     screen = Screen::Home;
     statusMsg = "Project closed.";
@@ -515,6 +518,20 @@ void App::clampActive()
     if (activeCol >= cols) activeCol = cols > 0 ? cols - 1 : 0;
     if (activeRow < 0) activeRow = 0;
     if (activeCol < 0) activeCol = 0;
+}
+
+// Reset the per-view column controls for a freshly adopted project: drop the zoom
+// and header selection, and arm a reflow so the first grading frame applies each
+// question's persisted viewWidth / folded state. headerSel is (re)sized in the grid
+// draw, so clearing it here is enough. Call after `project` is assigned.
+void App::resetColumnView()
+{
+    gridZoom = 1.0f;
+    gridReflow = true;          // first frame forces widths from the loaded grid
+    headerSel.clear();
+    headerSelAnchor = -1;
+    colMenuQuestion = -1;
+    requestOpenColMenu = false;
 }
 
 void App::undo()
@@ -636,6 +653,7 @@ void App::restoreFromAutosave()
     gridEditScoreDirty = false;
     gridEditSuppressSpace = false;
     project = std::move(p);
+    resetColumnView();             // zoom/selection reset; force recovered column widths
     hasProject = true;
     projectPath = rec.projectPath; // original .json, or "" if it was never saved
     dirty = true;                  // recovered work diverges from disk

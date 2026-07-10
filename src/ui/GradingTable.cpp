@@ -7,6 +7,7 @@
 #include "model/Scoring.h"
 #include "imgui.h"
 #include "imgui_stdlib.h"
+#include "imgui_internal.h" // TableSetColumnWidth / GetCurrentTable: runtime column widths
 
 #include <algorithm>
 #include <cfloat>
@@ -34,6 +35,9 @@ const char* gridShortcutsText()
         "Enter/Tab   commit (down / right); Esc cancels\n"
         "Ctrl+Z / Y  undo / redo     Ctrl+S  save\n"
         "Right-drag  paint full marks across a row/column\n"
+        "Ctrl+wheel  zoom the grid\n"
+        "Header      click = images; Ctrl/Shift+click = select columns;\n"
+        "            right-click = fold / size-to-fit menu (folded = locked)\n"
         "Notes (in the cell editor): Ctrl+Left-Shift = LTR, Ctrl+Right-Shift = RTL";
 }
 
@@ -43,8 +47,14 @@ const ImVec4 kGreenBtn (0.16f, 0.42f, 0.20f, 1.0f);
 const ImVec4 kGreenBtnH(0.22f, 0.54f, 0.26f, 1.0f);
 const ImVec4 kGreenBtnA(0.26f, 0.62f, 0.30f, 1.0f);
 const ImVec4 kOverBtn  (0.48f, 0.24f, 0.16f, 1.0f); // awarded over max
+const ImVec4 kGreenText(0.35f, 0.80f, 0.42f, 1.0f); // compact FULL marker (folded cell)
+const ImVec4 kOverText (0.85f, 0.50f, 0.32f, 1.0f); // compact over-max marker (folded cell)
 const ImVec4 kMutedText(0.55f, 0.57f, 0.60f, 1.0f);
 const ImU32  kNoSubRowBg = IM_COL32(70, 55, 55, 90);
+
+// Width of a folded (collapsed + locked) question column. Also the floor for a
+// column's stored viewWidth (Serialization clamps to this).
+constexpr float kFoldedWidth = 34.0f;
 
 // Screen rectangles of the grade cells drawn this frame (non-no-submission
 // only), used to hit-test the mouse for the drag-to-paint gesture. We cannot
@@ -150,6 +160,54 @@ void renderGradeCell(App& app, int i, int j)
     // cells too, so the selection stays visible while toggling a whole NS row.
     if (i == app.activeRow && j == app.activeCol) {
         ImGui::GetWindowDrawList()->AddRect(rmin, rmax, IM_COL32(90, 160, 255, 255), 0.0f, 0, 2.5f);
+        if (app.gridScrollToActive) {
+            ImGui::SetScrollHereY(0.5f);
+            ImGui::SetScrollHereX(0.5f);
+            app.gridScrollToActive = false;
+        }
+    }
+}
+
+// A cell of a FOLDED question column: a narrow, non-interactive strip that still
+// shows the result at a glance ("F" for full, the awarded number, or "-" for a
+// blank), keeping the green/orange coloring. There is no Button, so it can't be
+// clicked/edited; it is not pushed into g_cellRects, so the paint gesture skips it.
+// This is what "lock the column to protect graded data" looks like per-cell.
+void renderFoldedCell(App& app, int i, int j)
+{
+    gt::Student&  s = app.project.students[static_cast<size_t>(i)];
+    gt::Question& q = app.project.questions[static_cast<size_t>(j)];
+    gt::Cell&     c = s.cells[static_cast<size_t>(j)];
+
+    char buf[24];
+    const char* txt;
+    ImVec4 col;
+    if (s.noSubmission)                 { txt = "0"; col = kMutedText; }
+    else if (gt::isFullMarks(q, c))     { txt = "F"; col = kGreenText; }
+    else if (!c.touched)                { txt = "-"; col = kMutedText; }
+    else {
+        std::snprintf(buf, sizeof(buf), "%s", fmtNum(c.awarded).c_str());
+        txt = buf;
+        col = gt::cellOverMax(q, c) ? kOverText : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+    }
+
+    // Match the two-line cell height so folded and normal rows align.
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float cellH = ImGui::GetTextLineHeight() * 2.0f + style.FramePadding.y * 2.0f + 4.0f;
+    const ImVec2 cmin = ImGui::GetCursorScreenPos();
+    const float  avail = ImGui::GetContentRegionAvail().x;
+    const ImVec2 cmax(cmin.x + avail, cmin.y + cellH);
+
+    // Center the short marker in the strip.
+    const ImVec2 ts = ImGui::CalcTextSize(txt);
+    ImGui::SetCursorScreenPos(ImVec2(cmin.x + (avail - ts.x) * 0.5f,
+                                     cmin.y + (cellH - ts.y) * 0.5f));
+    ImGui::TextColored(col, "%s", txt);
+    ImGui::SetCursorScreenPos(cmin);
+    ImGui::Dummy(ImVec2(avail, cellH)); // reserve the full cell height (no interaction)
+
+    if (i == app.activeRow && j == app.activeCol) {
+        ImGui::GetWindowDrawList()->AddRect(cmin, cmax, IM_COL32(90, 160, 255, 255), 0.0f, 0, 2.5f);
         if (app.gridScrollToActive) {
             ImGui::SetScrollHereY(0.5f);
             ImGui::SetScrollHereX(0.5f);
@@ -322,6 +380,7 @@ void applyFullRange(App& app, int anchorRow, int anchorCol, int hr, int hc, int 
     auto paint = [&](int r, int cIdx) {
         if (r < 0 || r >= nStudents || cIdx < 0 || cIdx >= nQuestions) return;
         if (p.students[static_cast<size_t>(r)].noSubmission) return;
+        if (p.questions[static_cast<size_t>(cIdx)].folded) return; // locked column
         gt::Cell& cell = p.students[static_cast<size_t>(r)].cells[static_cast<size_t>(cIdx)];
         // Only flip fullTick; leave `touched`/awarded alone so un-fulling a blank
         // cell returns it to blank (full cells count regardless of `touched`).
@@ -440,30 +499,50 @@ void handleGridKeyboard(App& app)
     int& c = app.activeCol;
     bool moved = false;
 
+    // Folded columns are "put away & locked": navigation skips over them and the
+    // selection never rests on one (while any unfolded column remains).
+    auto isFolded = [&](int col) {
+        return col >= 0 && col < M && p.questions[static_cast<size_t>(col)].folded;
+    };
+    auto stepCol = [&](int dir) {                 // move c to the next unfolded column
+        for (int k = c + dir; k >= 0 && k < M; k += dir)
+            if (!isFolded(k)) { c = k; return true; }
+        return false;
+    };
+
     // ---- navigation (arrows / Tab / Enter) ----
     if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))     { if (r > 0)     { --r; moved = true; } }
     if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) ||
         ImGui::IsKeyPressed(ImGuiKey_Enter) ||
         ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) { if (r < N - 1) { ++r; moved = true; } }
-    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))   { if (c > 0)     { --c; moved = true; } }
-    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow))  { if (c < M - 1) { ++c; moved = true; } }
-    if (ImGui::IsKeyPressed(ImGuiKey_Tab)) {
-        if (io.KeyShift) { if (c > 0)     { --c; moved = true; } }
-        else             { if (c < M - 1) { ++c; moved = true; } }
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow))   { if (stepCol(-1)) moved = true; }
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow))  { if (stepCol(+1)) moved = true; }
+    if (ImGui::IsKeyPressed(ImGuiKey_Tab))         { if (stepCol(io.KeyShift ? -1 : +1)) moved = true; }
+
+    // If parked on a folded column (e.g. it was just folded, or loaded folded),
+    // snap to the nearest unfolded one so the cursor stays on editable data.
+    if (isFolded(c)) {
+        for (int d = 1; d < M; ++d) {
+            if (c - d >= 0 && !isFolded(c - d)) { c = c - d; break; }
+            if (c + d <  M && !isFolded(c + d)) { c = c + d; break; }
+        }
     }
+    const bool locked = isFolded(c); // still folded => every column is folded
 
     gt::Student&  s    = p.students[static_cast<size_t>(r)];
     gt::Cell&     cell = s.cells[static_cast<size_t>(c)];
     gt::Question& q    = p.questions[static_cast<size_t>(c)];
 
     // ---- single-key actions (no key-repeat) ----
-    if (ImGui::IsKeyPressed(ImGuiKey_F2, false) ||           // open the full editor
-        ImGui::IsKeyPressed(ImGuiKey_E, false)) {            // 'e' = same as F2
+    // Per-cell edits are suppressed on a folded (locked) column; only the row-level
+    // No-submission toggle ('n') stays available.
+    if ((ImGui::IsKeyPressed(ImGuiKey_F2, false) ||          // open the full editor
+         ImGui::IsKeyPressed(ImGuiKey_E, false)) && !locked) { // 'e' = same as F2
         app.editorStudent = r;
         app.editorQuestion = c;
         app.requestOpenCellEditor = true;
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_F, false) && !s.noSubmission) {
+    if (ImGui::IsKeyPressed(ImGuiKey_F, false) && !s.noSubmission && !locked) {
         cell.fullTick = !cell.fullTick;                      // leave `touched` alone (§6)
         app.markDirty();
     }
@@ -472,7 +551,7 @@ void handleGridKeyboard(App& app)
         app.markDirty();
     }
     if ((ImGui::IsKeyPressed(ImGuiKey_Delete, false) ||
-         ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) && !s.noSubmission) {
+         ImGui::IsKeyPressed(ImGuiKey_Backspace, false)) && !s.noSubmission && !locked) {
         cell = gt::blankCell(p.questions[static_cast<size_t>(c)]); // blank, all-answered
         app.markDirty();
     }
@@ -481,7 +560,7 @@ void handleGridKeyboard(App& app)
     // Like Space-open followed by an immediate Space-step: seed the score with the
     // cell's current value (so a later score edit is possible) but drop focus onto the
     // lp field, so tagging a page is a single key.
-    if (ImGui::IsKeyPressed(ImGuiKey_P, false) && !s.noSubmission) {
+    if (ImGui::IsKeyPressed(ImGuiKey_P, false) && !s.noSubmission && !locked) {
         if (gt::isFullMarks(q, cell)) app.gridEditBuf = fmtNum(q.maxPoints);
         else if (cell.touched)        app.gridEditBuf = fmtNum(cell.awarded);
         else                          app.gridEditBuf.clear();
@@ -500,7 +579,7 @@ void handleGridKeyboard(App& app)
     // gt::stepAwarded); '+' adds one (building up from 0 on a blank cell). Numpad and
     // main-row keys both emit these chars, so reading the char queue covers both;
     // consume it so the char can't also seed an inline edit below.
-    if (!s.noSubmission && !io.InputQueueCharacters.empty()) {
+    if (!s.noSubmission && !locked && !io.InputQueueCharacters.empty()) {
         bool stepped = false;
         for (ImWchar ch : io.InputQueueCharacters) {
             if (ch == '-')      { gt::stepAwarded(q, cell, -1.0); stepped = true; }
@@ -517,7 +596,7 @@ void handleGridKeyboard(App& app)
     // so the first digit isn't lost while the InputText is being focused. The
     // seed's auto-select-all is collapsed by inlineEditCallback so later digits
     // append rather than replace. ('-' is handled above as a step key, not a seed.)
-    if (!s.noSubmission && !io.InputQueueCharacters.empty()) {
+    if (!s.noSubmission && !locked && !io.InputQueueCharacters.empty()) {
         std::string seed;
         for (ImWchar ch : io.InputQueueCharacters)
             if ((ch >= '0' && ch <= '9') || ch == '.')
@@ -540,7 +619,7 @@ void handleGridKeyboard(App& app)
     // can add/adjust just one field (e.g. a last page on a green FULL cell, via a
     // second Space) or Esc out — the score / FULL / blank state is preserved unless
     // you actually retype it. (Guarded on !gridEditing so a same-frame digit wins.)
-    if (!app.gridEditing && !s.noSubmission && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
+    if (!app.gridEditing && !s.noSubmission && !locked && ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
         if (gt::isFullMarks(q, cell)) app.gridEditBuf = fmtNum(q.maxPoints);
         else if (cell.touched)        app.gridEditBuf = fmtNum(cell.awarded);
         else                          app.gridEditBuf.clear();
@@ -635,6 +714,118 @@ void renderStatsPopup(App& app)
     ImGui::EndPopup();
 }
 
+// The visible header label for question column j (title + max, plus an image badge).
+std::string questionHeaderLabel(const gt::Project& p, int j)
+{
+    const gt::Question& q = p.questions[static_cast<size_t>(j)];
+    std::string s = q.title + " /" + fmtNum(q.maxPoints);
+    if (!q.images.empty())
+        s += "  [" + std::to_string(q.images.size()) + " img]";
+    return s;
+}
+
+// Compute the ideal (un-zoomed) width for question column j: the widest of the
+// header label and every cell's content, plus padding. Measured with the *current*
+// font — call it outside the grid's zoom-font push so the result is in base units.
+// Stores the result in q.viewWidth; the reflow pass then applies it. O(students).
+void fitColumnWidth(App& app, int j)
+{
+    gt::Project& p = app.project;
+    if (j < 0 || j >= static_cast<int>(p.questions.size())) return;
+    gt::Question& q = p.questions[static_cast<size_t>(j)];
+
+    float w = ImGui::CalcTextSize(questionHeaderLabel(p, j).c_str()).x;
+    for (const auto& s : p.students) {
+        if (j >= static_cast<int>(s.cells.size())) continue;
+        // cellSummary is two lines ("score X/Y" \n "lp: ..."); fit to the wider one.
+        const std::string sum = cellSummary(q, s.cells[static_cast<size_t>(j)]);
+        const size_t nl = sum.find('\n');
+        const std::string l1 = nl == std::string::npos ? sum : sum.substr(0, nl);
+        const std::string l2 = nl == std::string::npos ? std::string() : sum.substr(nl + 1);
+        w = std::max(w, ImGui::CalcTextSize(l1.c_str()).x);
+        w = std::max(w, ImGui::CalcTextSize(l2.c_str()).x);
+    }
+    // The text sits inside both the table cell padding and the grade Button's frame
+    // padding, so account for both plus a small margin (the grid font matches this
+    // measurement now that the zoom push uses FontSizeBase, not GetFontSize()).
+    const ImGuiStyle& st = ImGui::GetStyle();
+    w += (st.CellPadding.x + st.FramePadding.x) * 2.0f + 10.0f;
+    if (w < kFoldedWidth) w = kFoldedWidth;
+    q.viewWidth = w;
+    app.gridReflow = true;
+    app.markDirty();
+}
+
+// Fold every question column, or only the selected ones. Also snaps the header
+// selection empty after a "fold selected" so a subsequent menu isn't stale.
+void setAllFolded(App& app, bool folded)
+{
+    for (auto& q : app.project.questions) q.folded = folded;
+    app.gridReflow = true;
+    app.markDirty();
+}
+
+// Right-click column context menu: size-to-fit, fold/unfold this column, fold the
+// multi-selected set, unfold all. Replaces ImGui's built-in header menu (whose
+// "Size column to fit" is a no-op for the stretch-button cells). Opened from the
+// custom header on right-click (app.colMenuQuestion / requestOpenColMenu).
+void columnMenuPopup(App& app)
+{
+    if (app.requestOpenColMenu) {
+        ImGui::OpenPopup("ColumnMenu");
+        app.requestOpenColMenu = false;
+    }
+    if (!ImGui::BeginPopup("ColumnMenu"))
+        return;
+
+    gt::Project& p = app.project;
+    const int M = static_cast<int>(p.questions.size());
+    const int j = app.colMenuQuestion;
+    const bool valid = j >= 0 && j < M;
+
+    int selCount = 0;
+    for (char v : app.headerSel) if (v) ++selCount;
+
+    if (valid)
+        ImGui::TextDisabled("%s", p.questions[static_cast<size_t>(j)].title.c_str());
+    ImGui::Separator();
+
+    if (ImGui::MenuItem("Size column to fit", nullptr, false, valid))
+        fitColumnWidth(app, j);
+    if (ImGui::MenuItem("Size all columns to fit")) {
+        for (int k = 0; k < M; ++k) fitColumnWidth(app, k);
+    }
+    ImGui::Separator();
+
+    if (valid) {
+        gt::Question& q = p.questions[static_cast<size_t>(j)];
+        if (q.folded) {
+            if (ImGui::MenuItem("Unfold this column")) {
+                q.folded = false; app.gridReflow = true; app.markDirty();
+            }
+        } else {
+            if (ImGui::MenuItem("Fold this column")) {
+                q.folded = true; app.gridReflow = true; app.markDirty();
+            }
+        }
+    }
+    char foldSelLabel[32];
+    std::snprintf(foldSelLabel, sizeof(foldSelLabel), "Fold selected (%d)", selCount);
+    if (ImGui::MenuItem(foldSelLabel, nullptr, false, selCount > 0)) {
+        for (int k = 0; k < M && k < static_cast<int>(app.headerSel.size()); ++k)
+            if (app.headerSel[static_cast<size_t>(k)]) p.questions[static_cast<size_t>(k)].folded = true;
+        std::fill(app.headerSel.begin(), app.headerSel.end(), 0);
+        app.headerSelAnchor = -1;
+        app.gridReflow = true;
+        app.markDirty();
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Unfold all columns"))
+        setAllFolded(app, false);
+
+    ImGui::EndPopup();
+}
+
 } // namespace
 
 void gradingScreen(App& app)
@@ -677,12 +868,41 @@ void gradingScreen(App& app)
     const int M = static_cast<int>(p.questions.size());
     const int columns = 1 + M + 1;
 
+    // Keep the per-question header multi-select mask sized to the grid.
+    if (static_cast<int>(app.headerSel.size()) != M)
+        app.headerSel.assign(static_cast<size_t>(M), 0);
+
+    // Ctrl+scroll zooms the grid (a per-view scale over the DPI font). Consume the
+    // wheel so the table doesn't also scroll, and arm a reflow to re-apply widths.
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.KeyCtrl && io.MouseWheel != 0.0f &&
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                               ImGuiHoveredFlags_AllowWhenBlockedByActiveItem)) {
+        app.gridZoom = std::clamp(app.gridZoom * (1.0f + 0.1f * io.MouseWheel), 0.5f, 2.5f);
+        app.gridReflow = true;
+        io.MouseWheel = 0.0f;
+    }
+
     const ImGuiTableFlags flags =
         ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX |
         ImGuiTableFlags_ScrollY | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingFixedFit |
         ImGuiTableFlags_HighlightHoveredColumn;
 
     const ImVec2 tableSize(0.0f, -ImGui::GetFrameHeightWithSpacing());
+
+    // Per-view zoom: scale the grid's font (rows/cells derive their height from it);
+    // column widths are scaled explicitly below. Toolbar/status bar stay normal size.
+    // Use FontSizeBase (the size BEFORE the global DPI factor) — passing GetFontSize()
+    // here would apply FontScaleMain twice (see imgui.h PushFont notes). zoom==1 is a
+    // no-op, so the grid matches the rest of the UI at 1x.
+    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * app.gridZoom);
+
+    // Displayed width of a question column: folded -> a narrow strip, else its stored
+    // base width; both scaled by the zoom.
+    auto colDisplayW = [&](int j) {
+        const gt::Question& q = p.questions[static_cast<size_t>(j)];
+        return (q.folded ? kFoldedWidth : q.viewWidth) * app.gridZoom;
+    };
 
     if (ImGui::BeginTable("grid", columns, flags, tableSize)) {
         ImGui::TableSetupScrollFreeze(1, 1); // keep ID column + header visible
@@ -695,13 +915,33 @@ void gradingScreen(App& app)
             headers.push_back(p.questions[static_cast<size_t>(j)].title + " /" +
                               fmtNum(p.questions[static_cast<size_t>(j)].maxPoints));
         for (int j = 0; j < M; ++j)
-            ImGui::TableSetupColumn(headers[static_cast<size_t>(j)].c_str(), ImGuiTableColumnFlags_WidthFixed, 190.0f);
+            ImGui::TableSetupColumn(headers[static_cast<size_t>(j)].c_str(),
+                                    ImGuiTableColumnFlags_WidthFixed, colDisplayW(j));
         ImGui::TableSetupColumn("Total", ImGuiTableColumnFlags_WidthFixed, 92.0f);
+
+        // Force question-column widths from our state when a reflow is pending (zoom /
+        // fold / size-to-fit). Must run before layout locks (before the first row) AND
+        // only once the table has been laid out at least once: on a brand-new table's
+        // first frame MinColumnWidth is still 0 and TableSetColumnWidth asserts on it
+        // (that path is reached on the first grading frame after a project load). There
+        // the TableSetupColumn init widths (also colDisplayW) already applied the right
+        // widths, so skipping the calls is correct. Read-back (below) is skipped on any
+        // reflow frame too.
+        const bool reflowed = app.gridReflow;
+        if (reflowed) {
+            ImGuiTable* tbl = ImGui::GetCurrentTable();
+            if (tbl && tbl->MinColumnWidth > 0.0f)
+                for (int j = 0; j < M; ++j)
+                    ImGui::TableSetColumnWidth(1 + j, colDisplayW(j));
+            app.gridReflow = false;
+        }
 
         // Custom header row. Mirrors ImGui::TableHeadersRow() (PushID per column +
         // proper header row height + the TableSetColumnIndex skip) so we don't
-        // corrupt table state, while making question headers clickable to open
-        // their image menu and showing a badge for attached images.
+        // corrupt table state (spec §10). Question headers are our own Selectable so
+        // we own every interaction: multi-select highlight, image menu, fold toggle,
+        // and our column context menu (ImGui's built-in header menu — whose "Size
+        // column to fit" is a no-op for the stretch-button cells — is bypassed).
         const int headerCols = 1 + M + 1;
         ImGui::TableNextRow(ImGuiTableRowFlags_Headers); // auto header row height
         for (int c = 0; c < headerCols; ++c) {
@@ -710,18 +950,41 @@ void gradingScreen(App& app)
             ImGui::PushID(c);
             if (c >= 1 && c <= M) {
                 const int j = c - 1;
+                gt::Question& q = p.questions[static_cast<size_t>(j)];
                 std::string hlabel = headers[static_cast<size_t>(j)];
-                const size_t nImg = p.questions[static_cast<size_t>(j)].images.size();
-                if (nImg > 0)
-                    hlabel += "  [" + std::to_string(nImg) + " img]";
-                ImGui::TableHeader(hlabel.c_str());
-                // Header image menu opens on LEFT-click. (The left/right swap is
-                // for cells only; right-click on a header is ImGui's built-in
-                // "size column to fit" menu, so keeping this on left avoids a
-                // collision.)
+                if (!q.images.empty())
+                    hlabel += "  [" + std::to_string(q.images.size()) + " img]";
+                if (q.folded)
+                    hlabel += " [fold]";
+                const bool selected = app.headerSel[static_cast<size_t>(j)] != 0;
+                ImGui::Selectable(hlabel.c_str(), selected, ImGuiSelectableFlags_None);
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s%s%s", q.title.c_str(),
+                                      q.folded   ? "  (folded/locked)" : "",
+                                      selected   ? "  (selected)" : "");
                 if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
-                    app.imageMenuQuestion = j;
-                    app.requestOpenImageMenu = true;
+                    if (io.KeyCtrl) {                                   // toggle selection
+                        app.headerSel[static_cast<size_t>(j)] ^= 1;
+                        app.headerSelAnchor = j;
+                    } else if (io.KeyShift && app.headerSelAnchor >= 0) { // range select
+                        const int a = std::min(app.headerSelAnchor, j);
+                        const int b = std::max(app.headerSelAnchor, j);
+                        std::fill(app.headerSel.begin(), app.headerSel.end(), 0);
+                        for (int k = a; k <= b && k < static_cast<int>(app.headerSel.size()); ++k)
+                            app.headerSel[static_cast<size_t>(k)] = 1;
+                    } else {                                           // plain click
+                        if (q.folded) {                                // fast unfold
+                            q.folded = false; app.gridReflow = true; app.markDirty();
+                        } else {                                       // open image menu
+                            app.imageMenuQuestion = j;
+                            app.requestOpenImageMenu = true;
+                        }
+                        app.headerSelAnchor = j;
+                    }
+                }
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {     // column menu
+                    app.colMenuQuestion = j;
+                    app.requestOpenColMenu = true;
                 }
             } else {
                 ImGui::TableHeader(ImGui::TableGetColumnName(c)); // "ID" / "Total"
@@ -747,7 +1010,9 @@ void gradingScreen(App& app)
 
                 for (int j = 0; j < M; ++j) {
                     ImGui::TableSetColumnIndex(1 + j);
-                    if (app.gridEditing && i == app.activeRow && j == app.activeCol && !s.noSubmission)
+                    if (p.questions[static_cast<size_t>(j)].folded)
+                        renderFoldedCell(app, i, j);            // narrow, locked strip
+                    else if (app.gridEditing && i == app.activeRow && j == app.activeCol && !s.noSubmission)
                         renderInlineEdit(app, i, j);
                     else
                         renderGradeCell(app, i, j);
@@ -764,8 +1029,28 @@ void gradingScreen(App& app)
             }
         }
 
+        // Capture a manual column-border drag back into the question's stored base
+        // width (so it persists and survives zoom). Layout is locked here, so the
+        // widths are final. Skip on a reflow frame (we just forced them) and skip
+        // folded columns (locked). Only a real change dirties the project.
+        if (!reflowed) {
+            if (ImGuiTable* tbl = ImGui::GetCurrentTable()) {
+                for (int j = 0; j < M; ++j) {
+                    gt::Question& q = p.questions[static_cast<size_t>(j)];
+                    if (q.folded) continue;
+                    const float given = tbl->Columns[1 + j].WidthGiven;
+                    const float base  = given / app.gridZoom;
+                    if (std::abs(base - q.viewWidth) > 0.5f) {
+                        q.viewWidth = base < kFoldedWidth ? kFoldedWidth : base;
+                        app.markDirty();
+                    }
+                }
+            }
+        }
+
         ImGui::EndTable();
     }
+    ImGui::PopFont(); // end per-view zoom
 
     // Resolve the left-click / drag-to-paint full-marks gesture for this frame.
     handlePaintGesture(app);
@@ -791,6 +1076,7 @@ void gradingScreen(App& app)
     cellEditorPopup(app);
     studentMenuPopup(app);
     questionImagesPopup(app);
+    columnMenuPopup(app); // opens itself from requestOpenColMenu (right-click header)
 
     ImGui::End();
 

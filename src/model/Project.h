@@ -46,6 +46,9 @@ struct Question {
     SplitMode                  split = SplitMode::Equal;
     std::vector<double>        subPoints; // size == subCount once normalized
     std::vector<QuestionImage> images;    // attached screenshots / solution refs
+    // View state (persisted so a finished column stays put across reopen).
+    bool                       folded = false;    // collapsed to a narrow, locked strip
+    float                      viewWidth = 190.0f; // base (un-zoomed) column width, px
 };
 
 // One graded cell (student × question). The grader types `awarded`; sub-questions

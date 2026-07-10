@@ -132,7 +132,15 @@ BODEX_DEMO=1 ./build/BodeX.exe
    **Ctrl+Shift+Z**) redoes it — also on the **Edit** menu. A whole right-drag paint
    counts as one step, and the selection jumps to the reverted cell. History is
    per-session and resets when you start, open, or close a project.
-6. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
+6. **Manage the columns.** **Ctrl+scroll** over the grid zooms it in/out (handy on a
+   second monitor). Finished with a question? **Fold** its column into a thin,
+   **locked** strip that still shows a compact score (`F` / the points / `-`) but can't
+   be changed by a stray click, keypress, or paint — so graded work is protected.
+   **Right-click a column header** for the menu: *Size column to fit* / *Size all
+   columns to fit*, *Fold* / *Unfold*. **Ctrl+click** (or **Shift+click** for a range)
+   headers to select several, then *Fold selected*. Click a folded header to unfold it.
+   Folds and column widths are saved with the project.
+7. **Ctrl+S** (or the Save button) writes the project to a `.json` file. Closing
    with unsaved changes prompts to Save / Discard / Cancel. In between saves, unsaved
    work is **autosaved** every ~30s (and when you switch away or quit); if BodeX
    closes unexpectedly, the next launch offers to **recover** it. Autosave is a safety
@@ -146,9 +154,10 @@ left-to-right and **Ctrl+Right-Shift** forces right-to-left (the usual Windows
 convention), and an `Auto / LTR / RTL` control sits under the field. The note reads
 the same way in the grid's hover tooltip.
 
-Click a **question's column header** to open its image menu — add / preview /
+**Left-click** a **question's column header** to open its image menu — add / preview /
 remove the question sheet and solution-reference screenshots, each tagged to the
-sub-questions it covers. Each **Preview** opens a separate, resizable window, and
+sub-questions it covers. (Right-click the header for the column fold / size menu — see
+step 6.) Each **Preview** opens a separate, resizable window, and
 you can keep several open beside the grid while you grade. Inside a preview:
 **mouse wheel** (or `< Prev` / `Next >`, or the arrow keys) flips through all of
 that question's images; **Ctrl+wheel** or the `+` / `-` buttons/keys zoom;
@@ -162,9 +171,10 @@ images are copied next to its `.json` in a `<project>.assets/` folder.
 
 A project is a single JSON document — `schemaVersion` (currently `2`), `name`,
 `createdIso`, the `questions` array (title, `maxPoints`, `subCount`, `split`,
-`subPoints`), and the `students` array (`id`, `noSubmission`, and a `cells` array
-with `fullTick`, `awarded`, `subAnswered`, `subChecks`, `lastPage`, `note`). It is
-plain text and easy to inspect or diff. Older v1 files open fine (their scores are
+`subPoints`, plus the column view state `folded` / `viewWidth`), and the `students`
+array (`id`, `noSubmission`, and a `cells` array with `fullTick`, `awarded`,
+`subAnswered`, `subChecks`, `lastPage`, `note`). It is plain text and easy to inspect
+or diff. Older files open fine (missing keys take their defaults; v1 scores are
 preserved on load).
 
 ## Layout

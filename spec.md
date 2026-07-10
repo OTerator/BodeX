@@ -165,6 +165,9 @@ struct Question {
     int         subCount  = 1;
     SplitMode   split     = SplitMode::Equal;
     std::vector<double> subPoints; // size == subCount once normalized
+    std::vector<QuestionImage> images; // attached screenshots / solution refs (§9b)
+    bool        folded    = false;  // column collapsed to a narrow, locked strip (§9)
+    float       viewWidth = 190.0f; // base (un-zoomed) column width in px (§9)
 };
 
 struct Cell {
@@ -303,7 +306,9 @@ Per-cell effective points, **highest precedence first**:
   Bump `schemaVersion` and add a migration branch here for any future breaking change.
   New scalar fields that default sensibly can be added **without** a bump: e.g.
   `Cell::noteDir` is serialized as an int (`0=Auto`) and older files that omit the
-  key load as `Auto` — additive, so it stayed on schema 2.
+  key load as `Auto` — additive, so it stayed on schema 2. Likewise
+  `Question::folded` / `Question::viewWidth` (§9) load as `false` / `190` when absent
+  (`viewWidth` is floored at the folded-strip width) — still schema 2.
 - Config: `%APPDATA%\BodeX\config.json` holds the recent-projects list **and the
   pending-autosave record** (`AutosaveRecord`, §8c); `%APPDATA%\BodeX\projects\` is
   the suggested (not enforced) save dir and `%APPDATA%\BodeX\autosave\` holds the
@@ -516,6 +521,44 @@ line 2 = `lp: <lastPage>`. Colors: green for full-tick, orange (`kOverBtn`) when
 disabled. The table uses `ScrollX|ScrollY|Resizable|SizingFixedFit`, frozen header
 row + ID column (`TableSetupScrollFreeze(1,1)`), and an `ImGuiListClipper` for
 rows.
+
+**Column view: zoom, size-to-fit, and folding (`GradingTable.cpp`).** Three related
+column-management controls, all persisted per-question except the zoom:
+
+- **Ctrl+scroll zoom** (`App::gridZoom`, session-only). Ctrl+wheel over the grid
+  scales it (0.5–2.5×). The table draw is wrapped in
+  `PushFont(nullptr, style.FontSizeBase * gridZoom)` — **`FontSizeBase`, not
+  `GetFontSize()`**, or `FontScaleMain` (the DPI factor) applies **twice** (see the
+  PushFont notes in `imgui.h`, and the double-scaled-grid regression this caused).
+  Row heights derive from the font; column widths scale explicitly (below). The
+  toolbar/status bar are outside the push, so they stay at 1×. zoom==1 is a no-op.
+- **Column widths are our state** (`Question::viewWidth`, base/un-zoomed, persisted).
+  Displayed width = `(folded ? kFoldedWidth : viewWidth) * gridZoom`, applied via
+  `TableSetupColumn` init widths, and re-forced with **`TableSetColumnWidth`** (an
+  imgui_internal API) on any `App::gridReflow` frame (zoom / fold / fit change). A
+  manual column-border drag is read back from `GetCurrentTable()->Columns[].WidthGiven`
+  into `viewWidth` (skipped on reflow frames; folded columns are locked). **Gotcha:**
+  `TableSetColumnWidth` asserts `MinColumnWidth > 0`, which is only true **after** the
+  table's first `TableUpdateLayout`; on a brand-new table's first frame (i.e. the first
+  grading frame right after a project load — `resetColumnView` sets `gridReflow`) the
+  init widths already apply, so the reflow **skips** the calls when `MinColumnWidth==0`.
+  Missing this guard crashed the load path (assert / blank window) while the demo path
+  (never sets `gridReflow`) looked fine.
+- **Folding** (`Question::folded`, persisted). Question headers are a custom
+  `Selectable` (replacing `ImGui::TableHeader`, whose built-in "Size column to fit" is
+  a no-op for the stretch-`Button` cells) — this owns all header interaction and gives
+  the multi-select highlight for free. **Ctrl+click** toggles a header into a selection
+  (`App::headerSel`), **Shift+click** ranges from `headerSelAnchor`; the right-click
+  **ColumnMenu** (`columnMenuPopup`) offers Size-to-fit / Size-all-to-fit
+  (`fitColumnWidth`, measures header + widest `cellSummary` line), Fold this /
+  **Fold selected (n)** / Unfold this / Unfold all. Plain-click a folded header to
+  unfold fast. A folded column renders each cell via `renderFoldedCell` — a narrow,
+  **non-interactive** strip showing a compact result (`F`/awarded/`-`, colors kept),
+  **not** pushed into `g_cellRects` (paint can't touch it). Folding **locks** the
+  column: `applyFullRange` skips folded columns; `handleGridKeyboard` skips them in
+  navigation and no-ops every per-cell edit when the active column is folded (row-level
+  `n` still allowed), snapping the selection off a folded column when any unfolded one
+  remains. State is reset in `App::resetColumnView` (new/open/close/restore).
 
 **Keyboard-first grading (the non-obvious parts).** `handleGridKeyboard(app)` runs
 near the top of `gradingScreen`, **before** `BeginTable`, so the selection / scroll
@@ -730,11 +773,12 @@ font is ASCII-only. So the feature is these cooperating pieces:
 
 ## 12. Verifying changes (do this, don't just build)
 
-- **Core logic:** `mingw32-make test` (191 checks: scoring rules incl. sub-question
+- **Core logic:** `mingw32-make test` (255 checks: scoring rules incl. sub-question
   sync, one-press `stepAwarded`, and `isFullMarks`, JSON string + on-disk round-trip,
-  recent-alias regression, `config <-> JSON` round-trip incl. the autosave record (§8c),
-  plus `Cell`/`Student` `operator==` and `firstGradingDiff` for the undo history — §8b).
-  Add cases when you touch model, scoring, or serialization.
+  the per-question `folded`/`viewWidth` view state (§9), recent-alias regression,
+  `config <-> JSON` round-trip incl. the autosave record (§8c), plus `Cell`/`Student`
+  `operator==` and `firstGradingDiff` for the undo history — §8b). Add cases when you
+  touch model, scoring, or serialization.
 - **It builds:** `mingw32-make` with no warnings.
 - **GUI, visually:** the app is a real Win32 window; verify by screenshot. Launch
   with a demo mode and capture with **PrintWindow** (not screen-copy — a background

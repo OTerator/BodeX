@@ -243,6 +243,36 @@ static void testImagesRoundTrip()
     CHECK(b.subQuestions[1] == 1);
 }
 
+// Per-question view state (folded + base column width) must survive a JSON round
+// trip, and old files that omit the keys must default to unfolded / 190 (additive
+// fields, no schemaVersion bump).
+static void testColumnViewRoundTrip()
+{
+    Project p = buildSample();
+    p.questions[0].folded    = true;
+    p.questions[0].viewWidth = 120.0f;
+    p.questions[1].folded    = false;
+    p.questions[1].viewWidth = 260.0f;
+
+    Project p2;
+    std::string err;
+    CHECK(projectFromJsonString(toJsonString(p), p2, &err));
+    CHECK(p2.questions[0].folded == true);
+    CHECK_NEAR(p2.questions[0].viewWidth, 120.0);
+    CHECK(p2.questions[1].folded == false);
+    CHECK_NEAR(p2.questions[1].viewWidth, 260.0);
+
+    // A project JSON without the keys loads with the defaults (unfolded / 190).
+    const char* noKeys =
+        "{\"schemaVersion\":2,\"name\":\"n\",\"questions\":["
+        "{\"title\":\"Q1\",\"maxPoints\":10,\"subCount\":1,\"split\":\"equal\"}"
+        "],\"students\":[{\"id\":1,\"noSubmission\":false,\"cells\":[{}]}]}";
+    Project p3;
+    CHECK(projectFromJsonString(noKeys, p3, &err));
+    CHECK(p3.questions[0].folded == false);
+    CHECK_NEAR(p3.questions[0].viewWidth, 190.0);
+}
+
 static void testMalformedJson()
 {
     Project p;
@@ -740,6 +770,7 @@ int main()
     testRoundTrip();
     testFileRoundTrip();
     testImagesRoundTrip();
+    testColumnViewRoundTrip();
     testMalformedJson();
     testRecentAliasSafe();
     testConfigRoundTrip();

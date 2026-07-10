@@ -98,6 +98,15 @@ public:
                                             // (recomputed each frame; grid keys yield to it)
     bool        showShortcuts = false;      // F1 toggles the grid shortcuts help overlay
 
+    // Column view controls (zoom / fold / multi-select). gridZoom is session-only;
+    // per-question `folded`/`viewWidth` live on the model (persisted). See GradingTable.
+    float             gridZoom = 1.0f;       // per-view grid scale (Ctrl+scroll)
+    bool              gridReflow = false;    // force column widths this frame (zoom/fold/fit)
+    std::vector<char> headerSel;             // per-question header multi-select mask
+    int               headerSelAnchor = -1;  // Shift+click range anchor
+    int               colMenuQuestion = -1;  // right-clicked header -> ColumnMenu target
+    bool              requestOpenColMenu = false;
+
     // Question images: where this project's image files currently live.
     std::string assetsDir;
 
@@ -147,6 +156,7 @@ private:
     void resetHistory();        // clear stacks + reseed baseline (new/open/close)
     void abortInProgressEdit(); // cancel any inline edit / paint gesture before a restore
     void clampActive();         // keep activeRow/activeCol inside the grid
+    void resetColumnView();     // reset zoom/selection; force widths from the new grid
 
     // ---- autosave / crash recovery (see App.cpp §autosave) ----
     // Periodic crash-insurance writes to %APPDATA%\BodeX\autosave\<project.id>.autosave.

@@ -85,6 +85,8 @@ json questionToJson(const Question& q)
         {"split", splitToStr(q.split)},
         {"subPoints", q.subPoints},
         {"images", std::move(images)},
+        {"folded", q.folded},         // view state; additive, old files -> false
+        {"viewWidth", q.viewWidth},   // additive, old files -> 190
     };
 }
 
@@ -100,6 +102,9 @@ Question questionFromJson(const json& j)
     if (j.contains("images") && j.at("images").is_array())
         for (const auto& ji : j.at("images"))
             q.images.push_back(imageFromJson(ji));
+    q.folded    = j.value("folded", false);          // additive; old files -> unfolded
+    q.viewWidth = j.value("viewWidth", 190.0f);       // additive; old files -> 190
+    if (q.viewWidth < 34.0f) q.viewWidth = 34.0f;     // floor == kFoldedWidth (GradingTable)
     return q;
 }
 
