@@ -8,6 +8,7 @@
 // question. Building/serialization helpers are inline so the model is header
 // only apart from Scoring/Serialization.
 
+#include <algorithm>
 #include <string>
 #include <vector>
 #include <utility>
@@ -35,6 +36,18 @@ struct QuestionImage {
     std::vector<int> subQuestions;  // 0-based indices; empty = whole question
 };
 
+// A pool entry of previously-committed per-sub-question note text, offered as a
+// clickable suggestion in the cell editor. Append-only (exact-dedup on (sub,text));
+// editing a picked suggestion adds a new entry rather than overwriting the original,
+// so the pool only grows. sub == -1 is the "general" (whole-cell) note bucket.
+struct NoteSuggestion {
+    int         sub = -1;
+    std::string text;
+    TextDir     dir = TextDir::Auto;
+
+    bool operator==(const NoteSuggestion& o) const = default;
+};
+
 // One question (column). maxPoints is the total for the question; a question is
 // made of subCount sub-questions whose point values are in subPoints. For an
 // Equal split every sub-question is worth maxPoints/subCount; for Custom the
@@ -45,10 +58,22 @@ struct Question {
     int                        subCount = 1;
     SplitMode                  split = SplitMode::Equal;
     std::vector<double>        subPoints; // size == subCount once normalized
+    std::vector<std::string>   subLabels; // size == subCount once normalized; "" = numeric fallback
     std::vector<QuestionImage> images;    // attached screenshots / solution refs
+    std::vector<NoteSuggestion> noteSuggestions; // per-sub note suggestion pool (append-only)
     // View state (persisted so a finished column stays put across reopen).
     bool                       folded = false;    // collapsed to a narrow, locked strip
     float                      viewWidth = 190.0f; // base (un-zoomed) column width, px
+};
+
+// A note attached to one sub-question of a cell. Sparse: only sub-questions with
+// non-empty text get an entry (kept sorted by `sub`, at most one per sub).
+struct SubNote {
+    int         sub = 0;   // 0-based sub-question index
+    std::string text;
+    TextDir     dir = TextDir::Auto;
+
+    bool operator==(const SubNote& o) const = default;
 };
 
 // One graded cell (student × question). The grader types `awarded`; sub-questions
@@ -57,7 +82,8 @@ struct Question {
 // the answered count and drives the deduction for an **Equal** split; `subChecks`
 // (per-sub-question answered flags, 1 = answered) drives it for a **Custom** split
 // and is empty otherwise. `fullTick` (green tick) overrides to the question's full
-// points. `lastPage` is a free-text resume marker.
+// points. `lastPage` is a free-text resume marker. `note` is the "general" (whole-
+// cell) note; `subNotes` holds additional per-sub-question notes.
 struct Cell {
     bool              fullTick = false;
     double            awarded = 0.0;
@@ -66,6 +92,7 @@ struct Cell {
     std::string       lastPage;
     std::string       note;
     TextDir           noteDir = TextDir::Auto; // note's base direction (Hebrew/RTL)
+    std::vector<SubNote> subNotes;        // per-sub-question notes (sparse, sorted by sub)
     bool              touched = false;   // grader entered something (blank vs explicit 0)
 
     // Value equality (all members are plain values) — used by the undo/redo
@@ -119,6 +146,8 @@ inline void normalizeQuestion(Question& q) {
         if (static_cast<int>(q.subPoints.size()) != q.subCount)
             q.subPoints.resize(static_cast<size_t>(q.subCount), equalShare(q));
     }
+    if (static_cast<int>(q.subLabels.size()) != q.subCount)
+        q.subLabels.resize(static_cast<size_t>(q.subCount)); // pad ""/truncate, like subPoints
     // Drop image sub-question tags that fall outside [0, subCount).
     for (auto& img : q.images) {
         std::vector<int> keep;
@@ -127,6 +156,71 @@ inline void normalizeQuestion(Question& q) {
                 keep.push_back(idx);
         img.subQuestions = std::move(keep);
     }
+    // Drop suggestion-pool entries that no longer map to a valid sub-question (or
+    // never had text) — sub == -1 (the general bucket) is always kept.
+    std::vector<NoteSuggestion> keepSugg;
+    for (auto& sug : q.noteSuggestions)
+        if (sug.sub >= -1 && sug.sub < q.subCount && !sug.text.empty())
+            keepSugg.push_back(std::move(sug));
+    q.noteSuggestions = std::move(keepSugg);
+}
+
+// The sub-question's display header: its free-text label if set, else the 1-based
+// number as a fallback ("1", "2", ...). Callers prefix it before the note text/input.
+inline std::string subHeader(const Question& q, int k) {
+    if (k >= 0 && k < static_cast<int>(q.subLabels.size()) && !q.subLabels[static_cast<size_t>(k)].empty())
+        return q.subLabels[static_cast<size_t>(k)];
+    return std::to_string(k + 1);
+}
+
+// The cell's note for sub-question `sub`, or nullptr if none is set.
+inline SubNote* findSubNote(Cell& c, int sub) {
+    for (auto& sn : c.subNotes)
+        if (sn.sub == sub) return &sn;
+    return nullptr;
+}
+inline const SubNote* findSubNote(const Cell& c, int sub) {
+    for (const auto& sn : c.subNotes)
+        if (sn.sub == sub) return &sn;
+    return nullptr;
+}
+
+// Set (or clear, if `text` is empty) the cell's note for sub-question `sub`, keeping
+// `subNotes` sorted by sub with at most one entry per sub.
+inline void setSubNote(Cell& c, int sub, const std::string& text, TextDir dir) {
+    auto it = std::find_if(c.subNotes.begin(), c.subNotes.end(),
+                           [sub](const SubNote& sn) { return sn.sub == sub; });
+    if (text.empty()) {
+        if (it != c.subNotes.end())
+            c.subNotes.erase(it);
+        return;
+    }
+    if (it != c.subNotes.end()) {
+        it->text = text;
+        it->dir = dir;
+        return;
+    }
+    SubNote sn; sn.sub = sub; sn.text = text; sn.dir = dir;
+    auto pos = std::lower_bound(c.subNotes.begin(), c.subNotes.end(), sub,
+                                [](const SubNote& a, int s) { return a.sub < s; });
+    c.subNotes.insert(pos, std::move(sn));
+}
+
+// True if the cell has a general note or any per-sub-question note.
+inline bool cellHasAnyNote(const Cell& c) { return !c.note.empty() || !c.subNotes.empty(); }
+
+// Add `text` to the question's note-suggestion pool for `sub` (-1 = general), unless
+// it's empty or an exact (sub, text) duplicate already exists. Returns whether it was
+// added; the pool is append-only (an edited pick never overwrites the original).
+inline bool addNoteSuggestion(Question& q, int sub, const std::string& text, TextDir dir) {
+    if (text.empty())
+        return false;
+    for (const auto& s : q.noteSuggestions)
+        if (s.sub == sub && s.text == text)
+            return false;
+    NoteSuggestion s; s.sub = sub; s.text = text; s.dir = dir;
+    q.noteSuggestions.push_back(std::move(s));
+    return true;
 }
 
 // A fresh cell for question q, defaulting to **all sub-questions answered** so
@@ -188,6 +282,23 @@ inline void ensureShape(Project& p) {
                 c.subAnswered = answered; // keep the count in sync for display
             } else {
                 c.subChecks.clear();
+            }
+            // Rebuild subNotes: valid sub range, non-empty text, first entry per sub,
+            // sorted (mirrors the (sub,text) pool pruning in normalizeQuestion).
+            if (!c.subNotes.empty()) {
+                std::vector<SubNote> keep;
+                for (auto& sn : c.subNotes) {
+                    if (sn.sub < 0 || sn.sub >= q.subCount || sn.text.empty())
+                        continue;
+                    bool dup = false;
+                    for (const auto& k : keep)
+                        if (k.sub == sn.sub) { dup = true; break; }
+                    if (!dup)
+                        keep.push_back(sn);
+                }
+                std::sort(keep.begin(), keep.end(),
+                         [](const SubNote& a, const SubNote& b) { return a.sub < b.sub; });
+                c.subNotes = std::move(keep);
             }
         }
     }

@@ -2,6 +2,7 @@
 
 #include "app/App.h"
 #include "ui/widgets.h"
+#include "ui/BidiInput.h"
 #include "ui/CellEditor.h"
 #include "ui/QuestionImages.h"
 #include "ui/ImageStore.h"   // focus-view inline image reference panel
@@ -134,26 +135,50 @@ void renderGradeCell(App& app, int i, int j)
     const bool hovered     = ImGui::IsItemHovered();
     if (s.noSubmission) ImGui::EndDisabled();
 
+    // Small "n" badge (top-right corner) on cells with any note attached; a click
+    // there opens the notes-viewer window instead of the cell editor.
+    // IsMouseHoveringRect is occlusion-blind (a floating preview above the grid
+    // would still "hover" the badge underneath it), so `badgeHovered` is only ever
+    // trusted below alongside `leftClicked` (IsItemClicked, occlusion-aware) — see
+    // NOTES.md "image-preview click-through".
+    const bool hasNote = !s.noSubmission && gt::cellHasAnyNote(c);
+    const float badgeSz = ImGui::GetFontSize() * 0.9f;
+    const ImVec2 badgeMin(rmax.x - badgeSz - 3.0f, rmin.y + 3.0f);
+    const ImVec2 badgeMax(badgeMin.x + badgeSz, badgeMin.y + badgeSz);
+    const bool badgeHovered = ImGui::IsMouseHoveringRect(badgeMin, badgeMax);
+    if (hasNote) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(badgeMin, badgeMax, IM_COL32(225, 180, 40, 235), 2.0f);
+        dl->AddText(ImVec2(badgeMin.x + 2.0f, badgeMin.y - 1.0f), IM_COL32(25, 25, 25, 255), "n");
+    }
+
     // Interaction (swapped from the usual convention on purpose):
-    //   left-click  -> open the cell editor (occlusion-aware via IsItemClicked)
+    //   left-click  -> badge hit = open the notes viewer; elsewhere = the cell editor
     //   right-click / right-drag -> full marks (handlePaintGesture, after the table)
     // The left-click editor uses IsItemClicked so it won't fire for cells hidden
     // under the floating image-preview window. (See NOTES.md: preview click-through.)
     if (!s.noSubmission) {
         g_cellRects.push_back({ rmin, rmax, i, j });
         if (leftClicked) {
-            app.activeRow = i;         // keep the keyboard selection in sync
-            app.activeCol = j;
-            app.gridEditing = false;
-            app.editorStudent = i;
-            app.editorQuestion = j;
-            app.requestOpenCellEditor = true;
+            if (hasNote && badgeHovered) {
+                openNotesWindow(app, i, j);
+            } else {
+                app.activeRow = i;         // keep the keyboard selection in sync
+                app.activeCol = j;
+                app.gridEditing = false;
+                app.editorStudent = i;
+                app.editorQuestion = j;
+                app.requestOpenCellEditor = true;
+            }
         }
     }
 
-    if (!s.noSubmission && hovered && (c.touched || c.fullTick) && !c.note.empty()) {
+    if (!s.noSubmission && hovered && gt::cellHasAnyNote(c)) {
         pushNotesFont(); // BiDi visual order + Hebrew glyphs for the note tooltip
-        ImGui::SetTooltip("%s", noteVisual(c.note, c.noteDir).c_str());
+        const std::vector<std::string> lines = cellNoteLinesVisual(q, c);
+        std::string joined;
+        for (size_t k = 0; k < lines.size(); ++k) { if (k) joined += "\n"; joined += lines[k]; }
+        ImGui::SetTooltip("%s", joined.c_str());
         popNotesFont();
     }
 
@@ -827,6 +852,10 @@ void columnMenuPopup(App& app)
             }
         }
     }
+    if (ImGui::MenuItem("Sub-question labels...", nullptr, false, valid && p.questions[static_cast<size_t>(j)].subCount >= 2)) {
+        app.labelsQuestion = j;
+        app.requestOpenSubLabels = true;
+    }
     char foldSelLabel[32];
     std::snprintf(foldSelLabel, sizeof(foldSelLabel), "Fold selected (%d)", selCount);
     if (ImGui::MenuItem(foldSelLabel, nullptr, false, selCount > 0)) {
@@ -840,6 +869,46 @@ void columnMenuPopup(App& app)
     ImGui::Separator();
     if (ImGui::MenuItem("Unfold all columns"))
         setAllFolded(app, false);
+
+    ImGui::EndPopup();
+}
+
+// Column-menu "Sub-question labels..." popup: a free-text (Hebrew-capable) label per
+// sub-question, empty = numeric fallback (gt::subHeader). Opened via app.labelsQuestion
+// / requestOpenSubLabels from the deferral block (gradingScreen), since opening it
+// directly from inside ColumnMenu would die with that popup's id stack.
+void subLabelsPopup(App& app)
+{
+    if (!ImGui::BeginPopup("SubLabels"))
+        return;
+
+    gt::Project& p = app.project;
+    const int j = app.labelsQuestion;
+    if (j < 0 || j >= static_cast<int>(p.questions.size())) {
+        ImGui::EndPopup();
+        return;
+    }
+    gt::Question& q = p.questions[static_cast<size_t>(j)];
+    if (static_cast<int>(q.subLabels.size()) != q.subCount)
+        q.subLabels.resize(static_cast<size_t>(q.subCount));
+
+    ImGui::Text("%s - sub-question labels", q.title.c_str());
+    ImGui::TextDisabled("Empty = numeric (1, 2, ...).");
+    ImGui::Separator();
+
+    for (int k = 0; k < q.subCount; ++k) {
+        ImGui::PushID(k);
+        ImGui::Text("%d:", k + 1);
+        ImGui::SameLine();
+        gt::TextDir tmp = gt::TextDir::Auto; // labels persist no direction of their own
+        if (bidiNoteInput("##lbl", q.subLabels[static_cast<size_t>(k)], tmp, 180.0f, true))
+            app.markDirty();
+        ImGui::PopID();
+    }
+
+    ImGui::Separator();
+    if (ImGui::Button("Close"))
+        ImGui::CloseCurrentPopup();
 
     ImGui::EndPopup();
 }
@@ -1227,19 +1296,39 @@ void gradingScreen(App& app)
         ImGui::OpenPopup("QuestionImages");
         app.requestOpenImageMenu = false;
     }
+    if (app.requestOpenSubLabels) {
+        ImGui::OpenPopup("SubLabels"); // opening this from inside ColumnMenu would die with its id stack
+        app.requestOpenSubLabels = false;
+    }
     cellEditorPopup(app);
+
+    // Close detection for the (non-modal) cell editor: catches the Close button,
+    // Esc, and a click outside the popup alike. Once it's no longer open, commit
+    // whatever note target was last drawn as a pending suggestion and reset the
+    // per-editor note-target state for the next cell.
+    if (app.editorWasOpen && !ImGui::IsPopupOpen("CellEditor")) {
+        app.commitPendingNoteSuggestion();
+        app.noteTargetValid = false;
+        app.editorNoteSub = -1;
+    }
+    app.editorWasOpen = ImGui::IsPopupOpen("CellEditor");
+
     studentMenuPopup(app);
     questionImagesPopup(app);
     columnMenuPopup(app); // opens itself from requestOpenColMenu (right-click header)
+    subLabelsPopup(app);  // opened above via requestOpenSubLabels (column menu)
 
     ImGui::End();
 
     // (The F1/Help shortcuts overlay now draws at app level — App::renderShortcutsOverlay
     // — so it is reachable from the Help menu on every screen, not just here.)
 
-    // Image previews are separate, non-modal windows (several can stay open while
-    // grading; navigate/zoom them without touching the header popup).
+    // Image previews / notes viewers are separate, non-modal windows (several can
+    // stay open while grading; navigate/zoom them without touching the header popup).
+    // notesViewerWindows must run after imagePreviewWindows: both feed
+    // app.anyPreviewFocused, and imagePreviewWindows is what resets it each frame.
     imagePreviewWindows(app);
+    notesViewerWindows(app);
 }
 
 } // namespace gt::ui

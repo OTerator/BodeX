@@ -64,4 +64,14 @@ std::string noteVisual(const std::string& logicalUtf8, gt::TextDir dir)
     return gt::bidiVisualUtf8(logicalUtf8, baseDirOf(dir));
 }
 
+std::vector<std::string> cellNoteLinesVisual(const gt::Question& q, const gt::Cell& c)
+{
+    std::vector<std::string> lines;
+    if (!c.note.empty())
+        lines.push_back(noteVisual(c.note, c.noteDir));
+    for (const auto& sn : c.subNotes)
+        lines.push_back(noteVisual(gt::subHeader(q, sn.sub) + ": " + sn.text, sn.dir));
+    return lines;
+}
+
 } // namespace gt::ui

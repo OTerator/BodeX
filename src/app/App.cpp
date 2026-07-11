@@ -65,6 +65,16 @@ static gt::Project buildDemoProject()
     gt::Project p = gt::makeProject("Demo Exercise", 8, {q1, q2, q3});
     p.createdIso = gt::nowIso();
 
+    // Sub-question labels (Hebrew) on Q1, so the cell editor's target chips and the
+    // notes badge/window have something besides numeric fallbacks to show off.
+    p.questions[0].subLabels = { "\xD7\x90", "\xD7\x91", "", "", "" }; // Aleph, Bet, then numeric fallback
+    // Seed the suggestion pool (one general, one per-sub) so the cell editor's
+    // suggestion list isn't empty on first look.
+    p.questions[0].noteSuggestions = {
+        gt::NoteSuggestion{-1, "nice work overall", gt::TextDir::Auto},
+        gt::NoteSuggestion{0, "recheck this part", gt::TextDir::Auto},
+    };
+
     // Equal-split deduction: Q1 has 5 sub-qs (4 pts each); 2 skipped -> 8 locked out.
     p.students[0].cells[0].awarded = 12; p.students[0].cells[0].subAnswered = 3;
     p.students[0].cells[0].touched = true; p.students[0].cells[0].lastPage = "14";
@@ -72,6 +82,9 @@ static gt::Project buildDemoProject()
     // notes support — the trailing "2" stays left-to-right inside the RTL text.
     p.students[0].cells[0].note = "בדוק סעיף 2";
     p.students[0].cells[0].noteDir = gt::TextDir::Auto;
+    // A per-sub-question note on sub 0 (labeled Aleph above), so the badge and the
+    // notes window show more than just the general note.
+    gt::setSubNote(p.students[0].cells[0], 0, "לבדוק שוב", gt::TextDir::Auto);
     p.students[0].cells[1].fullTick = true; p.students[0].cells[1].touched = true;
     p.students[1].noSubmission = true;
     p.students[2].cells[0].awarded = 25; p.students[2].cells[0].touched = true; // over max
@@ -366,6 +379,11 @@ void App::applyLoadedProject(gt::Project&& p, const std::string& path)
     clearAutosave();                // drop the outgoing project's autosave
     gt::ui::imageStoreReleaseAll(); // drop any previous project's textures
     previews.clear();               // stale windows would index into the old project
+    notesWins.clear();              // ditto for the notes-viewer windows
+    editorNoteSub = -1;
+    noteTargetValid = false;
+    editorWasOpen = false;
+    labelsQuestion = -1;
     activeRow = activeCol = 0;      // selection indexes into the new grid
     gridEditing = false;            // drop any half-finished inline edit
     gridEditPageActive = false;
@@ -390,6 +408,8 @@ bool App::doSave()
         return false;
     if (projectPath.empty())
         return doSaveAs();
+
+    commitPendingNoteSuggestion(); // capture a mid-edit note-in-progress before writing
 
     std::string err;
     if (!gt::saveProject(projectPath, project, &err)) {
@@ -443,6 +463,11 @@ void App::closeProject()
     editorStudent = editorQuestion = menuStudent = -1;
     imageMenuQuestion = -1;
     previews.clear();
+    notesWins.clear();
+    editorNoteSub = -1;
+    noteTargetValid = false;
+    editorWasOpen = false;
+    labelsQuestion = -1;
     addImagePendingFile.clear();
     activeRow = activeCol = 0;
     gridEditing = false;
@@ -459,6 +484,44 @@ void App::requestQuit()
 {
     flushAutosave();       // capture the latest edits before the guard/shutdown window
     guard(Pending::Quit);
+}
+
+// ------------------------------------------------------------- note suggestions --
+//
+// The cell editor sets the (student, question, sub) commit latch every frame it
+// draws a note target (CellEditor.cpp); this offers that target's *current* model
+// text back into the question's suggestion pool once the edit settles (switching
+// targets, closing the editor, or saving). addNoteSuggestion is exact-dedup, so
+// calling this at every boundary is safe/idempotent — it only ever adds once per
+// distinct (sub, text).
+void App::commitPendingNoteSuggestion()
+{
+    if (!noteTargetValid)
+        return;
+    noteTargetValid = false;
+
+    if (noteCommitStudent < 0 || noteCommitStudent >= static_cast<int>(project.students.size()) ||
+        noteCommitQuestion < 0 || noteCommitQuestion >= static_cast<int>(project.questions.size()))
+        return;
+    gt::Student& s = project.students[static_cast<size_t>(noteCommitStudent)];
+    if (noteCommitQuestion >= static_cast<int>(s.cells.size()))
+        return;
+    gt::Cell&     c = s.cells[static_cast<size_t>(noteCommitQuestion)];
+    gt::Question& q = project.questions[static_cast<size_t>(noteCommitQuestion)];
+
+    std::string  text;
+    gt::TextDir  dir;
+    if (noteCommitSub < 0) {
+        text = c.note;
+        dir  = c.noteDir;
+    } else {
+        const gt::SubNote* sn = gt::findSubNote(c, noteCommitSub);
+        if (!sn) return;
+        text = sn->text;
+        dir  = sn->dir;
+    }
+    if (gt::addNoteSuggestion(q, noteCommitSub, text, dir))
+        markDirty();
 }
 
 // ----------------------------------------------------------- undo / redo -----
@@ -652,6 +715,11 @@ void App::restoreFromAutosave()
     // leave the autosave record in place (the next tick overwrites the same file).
     gt::ui::imageStoreReleaseAll();
     previews.clear();
+    notesWins.clear();
+    editorNoteSub = -1;
+    noteTargetValid = false;
+    editorWasOpen = false;
+    labelsQuestion = -1;
     activeRow = activeCol = 0;
     gridEditing = false;
     gridEditPageActive = false;

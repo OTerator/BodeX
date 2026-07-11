@@ -21,6 +21,9 @@ namespace gt::ui {
 
 // Draw the note field at the current cursor, `width` px wide. Returns true if the
 // note text or its direction changed this frame (caller should mark dirty/touched).
-bool bidiNoteInput(const char* id, std::string& text, gt::TextDir& dir, float width);
+// `compact` hides the dir-radio row + resolved-direction indicator (used for short
+// inline fields like sub-question labels); the clear button and Ctrl+Shift direction
+// toggles still work either way.
+bool bidiNoteInput(const char* id, std::string& text, gt::TextDir& dir, float width, bool compact = false);
 
 } // namespace gt::ui

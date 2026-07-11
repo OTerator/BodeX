@@ -7,8 +7,11 @@
 #include "imgui.h"
 #include "imgui_stdlib.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
+#include <vector>
 
 namespace gt::ui {
 
@@ -46,9 +49,19 @@ void cellEditorPopup(App& app)
         return;
     }
 
+    // The editor was re-clicked onto a different cell while still open (a non-modal
+    // popup doesn't reset on a same-id OpenPopup while already open): commit the OLD
+    // target's pending note-suggestion before starting the new cell on the general note.
+    if (app.noteTargetValid && (app.noteCommitStudent != si || app.noteCommitQuestion != qi)) {
+        app.commitPendingNoteSuggestion();
+        app.editorNoteSub = -1;
+    }
+
     gt::Student&  s = app.project.students[static_cast<size_t>(si)];
     gt::Question& q = app.project.questions[static_cast<size_t>(qi)];
     gt::Cell&     c = s.cells[static_cast<size_t>(qi)];
+    if (q.subCount < 2)
+        app.editorNoteSub = -1; // no ambiguity to disambiguate -> always the general note
 
     ImGui::Text("Student %d  -  %s", s.id, q.title.c_str());
     ImGui::TextDisabled("max %s pts  -  %d sub-questions (%s split)",
@@ -147,14 +160,108 @@ void cellEditorPopup(App& app)
     // left, English left-to-right, paired punctuation mirrors in RTL runs, and the base
     // direction toggles with Ctrl+Left/Right-Shift. Stored text is exactly what's typed.
     ImGui::TextUnformatted("Note");
-    // Test aid only: BODEX_FOCUS_NOTE focuses the note field when the editor opens,
-    // so scripted keystroke tests land in the note (default UX still focuses grading).
-    static const bool kFocusNote = [] { const char* e = std::getenv("BODEX_FOCUS_NOTE"); return e && *e && *e != '0'; }();
-    if (kFocusNote && ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-    if (gt::ui::bidiNoteInput("##note", c.note, c.noteDir, 280.0f)) {
-        c.touched = true;
-        app.markDirty();
+
+    // Target chips: [general] + one per sub-question, only shown when there's more
+    // than one sub-question to disambiguate. Clicking a chip commits the OLD target's
+    // pending suggestion (a settle boundary) before switching.
+    if (q.subCount >= 2) {
+        pushNotesFont();
+        auto chip = [&](const std::string& label, int target) {
+            const bool active = app.editorNoteSub == target;
+            if (active) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            }
+            const std::string id = label + "###tgt" + std::to_string(target);
+            if (ImGui::Button(id.c_str())) {
+                app.commitPendingNoteSuggestion();
+                app.editorNoteSub = target;
+            }
+            if (active)
+                ImGui::PopStyleColor(2);
+        };
+        chip("general", -1);
+        for (int k = 0; k < q.subCount; ++k) {
+            ImGui::SameLine();
+            chip(noteVisual(gt::subHeader(q, k), gt::TextDir::Auto), k);
+        }
+        popNotesFont();
     }
+
+    const int noteSub = app.editorNoteSub;
+    if (noteSub < 0) {
+        // General (whole-cell) note: binds the model fields directly.
+        // Test aid only: BODEX_FOCUS_NOTE focuses the note field when the editor
+        // opens, so scripted keystroke tests land in the note (default UX still
+        // focuses grading). ID stays "##note" so this keeps working.
+        static const bool kFocusNote = [] { const char* e = std::getenv("BODEX_FOCUS_NOTE"); return e && *e && *e != '0'; }();
+        if (kFocusNote && ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+        if (gt::ui::bidiNoteInput("##note", c.note, c.noteDir, 280.0f)) {
+            c.touched = true;
+            app.markDirty();
+        }
+    } else {
+        // Sub-question note: copy-out/write-back (never creates an empty SubNote
+        // entry just from drawing) with a per-target widget id so ImGui's active-edit
+        // buffer can't bleed across targets when the chip selection changes.
+        pushNotesFont();
+        ImGui::TextUnformatted((noteVisual(gt::subHeader(q, noteSub), gt::TextDir::Auto) + ":").c_str());
+        popNotesFont();
+        ImGui::SameLine();
+        const gt::SubNote* existing = gt::findSubNote(c, noteSub);
+        std::string text = existing ? existing->text : std::string();
+        gt::TextDir dir   = existing ? existing->dir  : gt::TextDir::Auto;
+        char noteId[24];
+        std::snprintf(noteId, sizeof(noteId), "##note_s%d", noteSub);
+        if (gt::ui::bidiNoteInput(noteId, text, dir, 280.0f)) {
+            gt::setSubNote(c, noteSub, text, dir);
+            c.touched = true;
+            app.markDirty();
+        }
+    }
+
+    // Suggestions: previously-committed notes for this exact (question, target),
+    // newest first, clickable to reuse. Hidden-label Selectable (note text may
+    // contain "##", which would otherwise truncate a plain label) + drawlist text.
+    {
+        std::vector<int> idx;
+        for (int i = static_cast<int>(q.noteSuggestions.size()) - 1; i >= 0; --i)
+            if (q.noteSuggestions[static_cast<size_t>(i)].sub == noteSub)
+                idx.push_back(i);
+        if (!idx.empty()) {
+            ImGui::TextDisabled("Suggestions:");
+            const float rowH = ImGui::GetTextLineHeightWithSpacing();
+            const float h = std::min<float>(static_cast<float>(idx.size()), 6.0f) * rowH + 4.0f;
+            if (ImGui::BeginChild("##notesugg", ImVec2(280.0f, h), ImGuiChildFlags_Borders)) {
+                pushNotesFont();
+                for (int i : idx) {
+                    const gt::NoteSuggestion& sug = q.noteSuggestions[static_cast<size_t>(i)];
+                    char selId[24];
+                    std::snprintf(selId, sizeof(selId), "##sugg%d", i);
+                    if (ImGui::Selectable(selId, false, ImGuiSelectableFlags_DontClosePopups)) {
+                        if (noteSub < 0) { c.note = sug.text; c.noteDir = sug.dir; }
+                        else             gt::setSubNote(c, noteSub, sug.text, sug.dir);
+                        c.touched = true;
+                        app.markDirty();
+                    }
+                    const ImVec2 rmin = ImGui::GetItemRectMin();
+                    const std::string vis = noteVisual(sug.text, sug.dir);
+                    ImGui::GetWindowDrawList()->AddText(ImVec2(rmin.x + 2.0f, rmin.y),
+                                                        ImGui::GetColorU32(ImGuiCol_Text), vis.c_str());
+                }
+                popNotesFont();
+            }
+            ImGui::EndChild();
+        }
+    }
+
+    // Refresh the pending-suggestion latch with whatever target was drawn this
+    // frame, so the next settle boundary (target switch / editor close / save)
+    // offers ITS current text — not a stale one from a prior frame.
+    app.noteCommitStudent  = si;
+    app.noteCommitQuestion = qi;
+    app.noteCommitSub      = noteSub;
+    app.noteTargetValid    = true;
 
     ImGui::Separator();
     ImGui::Text("Cell score: %s / %s",
@@ -206,6 +313,82 @@ void studentMenuPopup(App& app)
         ImGui::CloseCurrentPopup();
 
     ImGui::EndPopup();
+}
+
+void openNotesWindow(App& app, int student, int question)
+{
+    for (NotesWin& w : app.notesWins) {
+        if (w.student == student && w.question == question) {
+            w.open = true;
+            w.focusNext = true;
+            return;
+        }
+    }
+    NotesWin w;
+    w.id = app.nextNotesWinId++;
+    w.student = student;
+    w.question = question;
+    w.focusNext = true;
+    app.notesWins.push_back(w);
+}
+
+namespace {
+
+// Draw one notes-viewer window. Returns false if it should be closed this frame.
+bool drawNotesWindow(App& app, NotesWin& w)
+{
+    if (w.student < 0 || w.student >= static_cast<int>(app.project.students.size()) ||
+        w.question < 0 || w.question >= static_cast<int>(app.project.questions.size()))
+        return false;
+    gt::Student&  s = app.project.students[static_cast<size_t>(w.student)];
+    gt::Question& q = app.project.questions[static_cast<size_t>(w.question)];
+    gt::Cell&     c = s.cells[static_cast<size_t>(w.question)];
+
+    ImGui::SetNextWindowSize(ImVec2(380, 220), ImGuiCond_FirstUseEver);
+    // Fixed ###id per window so its visible title (student/question names, which
+    // can't actually change here, but mirrors the image-preview precedent) doesn't
+    // make ImGui treat it as a different window.
+    const std::string title = "Notes - Student " + std::to_string(s.id) + " - " + q.title +
+        "###bodex_notes_" + std::to_string(w.id);
+
+    bool open = true;
+    if (ImGui::Begin(title.c_str(), &open)) {
+        if (w.focusNext) { ImGui::SetWindowFocus(); w.focusNext = false; }
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+            app.anyPreviewFocused = true; // grid keyboard yields to a focused notes window too
+
+        const std::vector<std::string> lines = cellNoteLinesVisual(q, c);
+        if (lines.empty()) {
+            ImGui::TextDisabled("(no notes)"); // stays open if the notes are cleared elsewhere
+        } else {
+            pushNotesFont();
+            for (const auto& line : lines)
+                ImGui::TextUnformatted(line.c_str());
+            popNotesFont();
+        }
+    }
+    ImGui::End();
+    return open;
+}
+
+} // namespace
+
+void notesViewerWindows(App& app)
+{
+    // Same "Unsaved Changes" modal guard as imagePreviewWindows (see NOTES.md /
+    // spec §9b): a focused floating window would otherwise render above the modal
+    // and swallow its Save/Discard/Cancel clicks.
+    if (ImGui::IsPopupOpen("Unsaved Changes"))
+        return;
+
+    for (NotesWin& w : app.notesWins)
+        if (w.open && !drawNotesWindow(app, w))
+            w.open = false;
+
+    app.notesWins.erase(
+        std::remove_if(app.notesWins.begin(), app.notesWins.end(),
+                       [](const NotesWin& w) { return !w.open; }),
+        app.notesWins.end());
 }
 
 } // namespace gt::ui

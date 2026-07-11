@@ -139,7 +139,8 @@ BODEX_DEMO=1 ./build/BodeX.exe
    **locked** strip that still shows a compact score (`F` / the points / `-`) but can't
    be changed by a stray click, keypress, or paint — so graded work is protected.
    **Right-click a column header** for the menu: *Size column to fit* / *Size all
-   columns to fit*, *Fold* / *Unfold*. **Ctrl+click** (or **Shift+click** for a range)
+   columns to fit*, *Fold* / *Unfold*, **Sub-question labels…** (for questions with
+   more than one sub-question). **Ctrl+click** (or **Shift+click** for a range)
    headers to select several, then *Fold selected*. Click a folded header to unfold it.
    Folds and column widths are saved with the project.
 7. **Focus on one question.** Click **Focus view** (or press **F3**) to grade a
@@ -165,6 +166,20 @@ left-to-right and **Ctrl+Right-Shift** forces right-to-left (the usual Windows
 convention), and an `Auto / LTR / RTL` control sits under the field. The note reads
 the same way in the grid's hover tooltip.
 
+**Notes are per sub-question, not just per cell.** A question with more than one
+sub-question shows a row of target chips above the note field — `general` plus one
+per sub-question — so you can leave a separate note on, say, "part b" instead of one
+blurred-together comment. Sub-questions get a **free-text label** (Hebrew-capable):
+set it while creating the project, or later from a column header's right-click menu →
+**Sub-question labels…**; an unlabeled sub-question just shows its number. Every note
+you commit (by switching targets, closing the editor, or saving) is offered back as a
+**clickable suggestion** the next time you're on that same (question, sub-question) —
+handy for repeated feedback like "check your units" across many students; editing a
+picked suggestion adds a new one rather than overwriting the original. A cell with any
+note — general or per-sub — gets a small **`n` badge** in its top-right corner; click
+it to open a floating **notes window** listing every note on that cell, line by line
+(header-prefixed for sub-question notes), which you can keep open beside the grid.
+
 **Left-click** a **question's column header** to open its image menu — add / preview /
 remove the question sheet and solution-reference screenshots, each tagged to the
 sub-questions it covers. Attach with **Add image…** (file dialog), the **Paste
@@ -185,11 +200,12 @@ images are copied next to its `.json` in a `<project>.assets/` folder.
 
 A project is a single JSON document — `schemaVersion` (currently `2`), `name`,
 `createdIso`, the `questions` array (title, `maxPoints`, `subCount`, `split`,
-`subPoints`, plus the column view state `folded` / `viewWidth`), and the `students`
-array (`id`, `noSubmission`, and a `cells` array with `fullTick`, `awarded`,
-`subAnswered`, `subChecks`, `lastPage`, `note`). It is plain text and easy to inspect
-or diff. Older files open fine (missing keys take their defaults; v1 scores are
-preserved on load).
+`subPoints`, `subLabels`, a `noteSuggestions` pool, plus the column view state
+`folded` / `viewWidth`), and the `students` array (`id`, `noSubmission`, and a
+`cells` array with `fullTick`, `awarded`, `subAnswered`, `subChecks`, `lastPage`,
+`note` + `noteDir`, and per-sub-question `subNotes`). It is plain text and easy to
+inspect or diff. Older files open fine (missing keys take their defaults; v1 scores
+are preserved on load).
 
 ## Layout
 

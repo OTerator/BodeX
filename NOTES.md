@@ -159,8 +159,17 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 
 **Identity & rubric**
 - **Roster import (IDs → names)** from CSV, shown in the ID column and exports.
-- **Reusable deduction/comment snippets (rubric)** applied per sub-question for
-  consistency and speed.
+- ~~**Reusable comment snippets, per sub-question**~~ — **done (comment half):**
+  notes are now per-sub-question (a `general` note plus one per sub, selected via
+  target chips in the cell editor), each sub-question gets a free-text label (set at
+  project creation or via the column header's **Sub-question labels...**), and every
+  committed note is offered back as a clickable **suggestion** for that exact
+  (question, sub) — an append-only, exact-dedup pool, so picking-then-editing a
+  suggestion adds a new entry rather than overwriting the original. A cell with any
+  note gets a small `n` badge; click it for a floating window listing every note on
+  that cell. See spec.md §5/§9/§9c. *Still open:* this is comments only — a
+  **deduction** snippet (a rubric line that also adjusts the score, not just leaves
+  text) is a separate, unimplemented idea.
 - ~~**Hebrew / RTL cell notes**~~ — **done:** a self-contained reduced Unicode BiDi
   engine (`model/Bidi.*`, unit-tested) reorders logical→visual (mirroring paired
   punctuation in RTL runs) and a **WYSIWYG editable** note field (`ui/BidiInput.*`)

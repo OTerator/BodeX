@@ -53,6 +53,19 @@ static Project buildSample()
     imgS.subQuestions = {0, 1, 9};
     p.questions[1].images = {imgQ, imgS};
 
+    // Sub-question labels on Q1: sub 0 gets a Hebrew label (byte-escaped so the file
+    // stays source-encoding-agnostic; Aleph = U+05D0 = "\xD7\x90"), the rest fall
+    // back to their numeric header ("2".."5").
+    p.questions[0].subLabels[0] = "\xD7\x90";
+
+    // A per-sub note-suggestion pool on Q1: two sub-specific entries plus one in the
+    // general (-1) bucket.
+    p.questions[0].noteSuggestions = {
+        NoteSuggestion{0, "recheck this part", TextDir::Auto},
+        NoteSuggestion{2, "\xD7\x90\xD7\x91\xD7\x92", TextDir::RTL},
+        NoteSuggestion{-1, "well done overall", TextDir::Auto},
+    };
+
     // Student 1: Q1 awarded 12 with 3/5 answered (2 skipped -> 8 locked, effMax 12,
     // so 12 caps to 12); green tick on Q2 -> 10. Total 22.
     p.students[0].cells[0].awarded = 12.0;
@@ -61,6 +74,8 @@ static Project buildSample()
     p.students[0].cells[0].lastPage = "p.14";
     p.students[0].cells[0].note = "recheck part b";
     p.students[0].cells[0].noteDir = TextDir::RTL;
+    // One per-sub-question note (RTL), on sub-question 2 (0-based).
+    p.students[0].cells[0].subNotes = { SubNote{2, "\xD7\x90\xD7\x91\xD7\x92", TextDir::RTL} };
     p.students[0].cells[1].fullTick = true;
     p.students[0].cells[1].touched = true;
 
@@ -188,6 +203,15 @@ static void testRoundTrip()
     CHECK(p2.students[0].cells[0].lastPage == "p.14");
     CHECK(p2.students[0].cells[0].note == "recheck part b");
     CHECK(p2.students[0].cells[0].noteDir == TextDir::RTL);
+    CHECK(p2.students[0].cells[0].subNotes.size() == 1);
+    CHECK(p2.students[0].cells[0].subNotes[0].sub == 2);
+    CHECK(p2.students[0].cells[0].subNotes[0].text == "\xD7\x90\xD7\x91\xD7\x92");
+    CHECK(p2.students[0].cells[0].subNotes[0].dir == TextDir::RTL);
+    CHECK(p2.questions[0].subLabels.size() == 5);
+    CHECK(p2.questions[0].subLabels[0] == "\xD7\x90");
+    CHECK(p2.questions[0].noteSuggestions.size() == 3);
+    CHECK(p2.questions[0].noteSuggestions[2].sub == -1);
+    CHECK(p2.questions[0].noteSuggestions[2].text == "well done overall");
 
     // Scores must be identical after a round-trip.
     CHECK_NEAR(studentTotal(p2, 0), 22.0);
@@ -211,6 +235,9 @@ static void testFileRoundTrip()
     CHECK_NEAR(studentTotal(p2, 2), 20.0);
     CHECK(p2.students[0].cells[0].lastPage == "p.14");
     CHECK(p2.questions[1].split == SplitMode::Custom);
+    CHECK(p2.students[0].cells[0].subNotes.size() == 1);
+    CHECK(p2.questions[0].subLabels[0] == "\xD7\x90");
+    CHECK(p2.questions[0].noteSuggestions.size() == 3);
 
     std::remove(path.c_str());
 
@@ -275,6 +302,57 @@ static void testColumnViewRoundTrip()
     CHECK(projectFromJsonString(noKeys, p3, &err));
     CHECK(p3.questions[0].folded == false);
     CHECK_NEAR(p3.questions[0].viewWidth, 190.0);
+}
+
+// Per-sub-question notes (subLabels / Cell::subNotes / Question::noteSuggestions)
+// are additive fields (no schemaVersion bump): old files that omit them load with
+// empty defaults, and ensureShape() prunes out-of-range/empty entries on load.
+static void testNotesRoundTripDefaults()
+{
+    Project p = buildSample();
+    Project p2;
+    std::string err;
+    CHECK(projectFromJsonString(toJsonString(p), p2, &err));
+    CHECK(p2.questions[0].subLabels[0] == "\xD7\x90");
+    CHECK(p2.students[0].cells[0].subNotes.size() == 1);
+    CHECK(p2.questions[0].noteSuggestions.size() == 3);
+
+    // A project JSON without any of the new keys loads with empty defaults, schema 2.
+    const char* noKeys =
+        "{\"schemaVersion\":2,\"name\":\"n\",\"questions\":["
+        "{\"title\":\"Q1\",\"maxPoints\":10,\"subCount\":3,\"split\":\"equal\"}"
+        "],\"students\":[{\"id\":1,\"noSubmission\":false,\"cells\":[{}]}]}";
+    Project p3;
+    CHECK(projectFromJsonString(noKeys, p3, &err));
+    CHECK(p3.schemaVersion == 2);
+    CHECK(p3.questions[0].subLabels.size() == 3);
+    CHECK(p3.questions[0].subLabels[0].empty());
+    CHECK(p3.questions[0].noteSuggestions.empty());
+    CHECK(p3.students[0].cells[0].subNotes.empty());
+
+    // Out-of-range sub (9, on a subCount-3 question) and an empty-text entry must be
+    // pruned by ensureShape() on load (image-tag precedent).
+    const char* dirty =
+        "{\"schemaVersion\":2,\"name\":\"n\",\"questions\":["
+        "{\"title\":\"Q1\",\"maxPoints\":10,\"subCount\":3,\"split\":\"equal\","
+        "\"noteSuggestions\":["
+        "{\"sub\":1,\"text\":\"ok\",\"dir\":0},"
+        "{\"sub\":9,\"text\":\"bad\",\"dir\":0},"
+        "{\"sub\":0,\"text\":\"\",\"dir\":0},"
+        "{\"sub\":-1,\"text\":\"general\",\"dir\":0}"
+        "]}],"
+        "\"students\":[{\"id\":1,\"noSubmission\":false,\"cells\":[{\"subNotes\":["
+        "{\"sub\":1,\"text\":\"kept\",\"dir\":2},"
+        "{\"sub\":9,\"text\":\"dropped (out of range)\",\"dir\":0},"
+        "{\"sub\":2,\"text\":\"\",\"dir\":0}"
+        "]}]}]}";
+    Project p4;
+    CHECK(projectFromJsonString(dirty, p4, &err));
+    CHECK(p4.questions[0].noteSuggestions.size() == 2); // sub=1 "ok" and sub=-1 "general" kept
+    CHECK(p4.students[0].cells[0].subNotes.size() == 1);
+    CHECK(p4.students[0].cells[0].subNotes[0].sub == 1);
+    CHECK(p4.students[0].cells[0].subNotes[0].text == "kept");
+    CHECK(p4.students[0].cells[0].subNotes[0].dir == TextDir::RTL);
 }
 
 static void testMalformedJson()
@@ -613,6 +691,95 @@ static void testSubChecksAndMigration()
     CHECK_NEAR(cellPoints(pv.students[0], pv.questions[0], pv.students[0].cells[0]), 12.0);
 }
 
+// Per-sub-question note helpers: setSubNote (create/replace/erase-on-empty, keeps
+// subNotes sorted), findSubNote (hit/miss, const and mutable), cellHasAnyNote, and
+// subHeader (label vs numeric fallback vs out-of-range).
+static void testSubNoteHelpers()
+{
+    Question q; q.title = "Q"; q.maxPoints = 10.0; q.subCount = 3;
+    normalizeQuestion(q);
+    q.subLabels[1] = "\xD7\x91"; // Hebrew Bet on sub-question 1 (0-based)
+
+    CHECK(subHeader(q, 0) == "1");            // no label -> numeric fallback
+    CHECK(subHeader(q, 1) == "\xD7\x91");     // label wins
+    CHECK(subHeader(q, 2) == "3");
+    CHECK(subHeader(q, 99) == "100");         // out-of-range index -> still numeric fallback
+
+    Cell c = blankCell(q);
+    CHECK(!cellHasAnyNote(c));
+    CHECK(findSubNote(c, 0) == nullptr);
+
+    // Create, in reverse order, to exercise the sorted insert.
+    setSubNote(c, 2, "third", TextDir::Auto);
+    setSubNote(c, 0, "first", TextDir::Auto);
+    CHECK(c.subNotes.size() == 2);
+    CHECK(c.subNotes[0].sub == 0 && c.subNotes[0].text == "first");  // sorted by sub
+    CHECK(c.subNotes[1].sub == 2 && c.subNotes[1].text == "third");
+    CHECK(cellHasAnyNote(c));
+
+    const SubNote* found = findSubNote(c, 2);
+    CHECK(found != nullptr);
+    CHECK(found->text == "third");
+    CHECK(findSubNote(c, 1) == nullptr);      // miss: no note on sub 1
+
+    // Replace in place (no growth, no re-sort needed).
+    setSubNote(c, 0, "first (edited)", TextDir::RTL);
+    CHECK(c.subNotes.size() == 2);
+    CHECK(c.subNotes[0].text == "first (edited)");
+    CHECK(c.subNotes[0].dir == TextDir::RTL);
+
+    // Empty text erases the entry.
+    setSubNote(c, 0, "", TextDir::Auto);
+    CHECK(c.subNotes.size() == 1);
+    CHECK(findSubNote(c, 0) == nullptr);
+    CHECK(cellHasAnyNote(c));                 // sub 2's note still there
+
+    setSubNote(c, 2, "", TextDir::Auto);
+    CHECK(c.subNotes.empty());
+    CHECK(!cellHasAnyNote(c));
+
+    c.note = "general note";
+    CHECK(cellHasAnyNote(c));                 // the whole-cell note also counts
+}
+
+// The note-suggestion pool (Question::noteSuggestions): append, exact (sub,text)
+// dedup, same text under a different sub adds, empty text refused, and an edited
+// pick becomes a new entry while the original stays. normalizeQuestion prunes
+// out-of-range subs but always keeps the general (-1) bucket.
+static void testNoteSuggestionPool()
+{
+    Question q; q.title = "Q"; q.maxPoints = 10.0; q.subCount = 2;
+    normalizeQuestion(q);
+
+    CHECK(addNoteSuggestion(q, 0, "good work", TextDir::Auto));
+    CHECK(q.noteSuggestions.size() == 1);
+
+    CHECK(!addNoteSuggestion(q, 0, "good work", TextDir::Auto)); // exact dup refused
+    CHECK(q.noteSuggestions.size() == 1);
+
+    CHECK(addNoteSuggestion(q, 1, "good work", TextDir::Auto));  // same text, different sub
+    CHECK(q.noteSuggestions.size() == 2);
+
+    CHECK(!addNoteSuggestion(q, -1, "", TextDir::Auto));         // empty text refused
+    CHECK(q.noteSuggestions.size() == 2);
+
+    CHECK(addNoteSuggestion(q, -1, "nice job", TextDir::Auto));  // general bucket
+    CHECK(q.noteSuggestions.size() == 3);
+
+    // "Edited pick" pattern: picking "good work" then editing it to "good work!"
+    // adds a new entry; the original is never overwritten.
+    CHECK(addNoteSuggestion(q, 0, "good work!", TextDir::Auto));
+    CHECK(q.noteSuggestions.size() == 4);
+    CHECK(q.noteSuggestions[0].text == "good work"); // original untouched
+
+    // normalizeQuestion (subCount shrinks to 1) prunes sub==1 entries but keeps -1.
+    q.subCount = 1;
+    normalizeQuestion(q);
+    for (const auto& s : q.noteSuggestions)
+        CHECK(s.sub == 0 || s.sub == -1);
+    CHECK(q.noteSuggestions.size() == 3); // the two sub==0 entries + the -1 one
+}
+
 // Cell/Student value equality (defaulted operator==) drives the undo history's
 // change-detection: every field participates, so a real edit is never missed and a
 // no-op change never fabricates a dead history entry.
@@ -630,6 +797,7 @@ static void testGradingEquality()
     b = a; b.lastPage = "p.3"; CHECK(!(a == b));
     b = a; b.note = "x";       CHECK(!(a == b));
     b = a; b.noteDir = TextDir::RTL; CHECK(!(a == b)); // direction participates in undo diff
+    b = a; b.subNotes = { SubNote{0, "x", TextDir::Auto} }; CHECK(!(a == b)); // per-sub notes too
     b = a; b.touched = true;   CHECK(!(a == b));
 
     Cell c1 = blankCell(qc), c2 = c1;
@@ -824,6 +992,7 @@ int main()
     testFileRoundTrip();
     testImagesRoundTrip();
     testColumnViewRoundTrip();
+    testNotesRoundTripDefaults();
     testMalformedJson();
     testRecentAliasSafe();
     testConfigRoundTrip();
@@ -833,6 +1002,8 @@ int main()
     testStepAwarded();
     testIsFullMarks();
     testSubChecksAndMigration();
+    testSubNoteHelpers();
+    testNoteSuggestionPool();
     testGradingEquality();
     testFirstGradingDiff();
     testBidi();

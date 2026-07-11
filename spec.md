@@ -122,10 +122,11 @@ src/
   ui/NewProjectScreen.*  Table-size + per-question config; live total-points counter.
   ui/GradingTable.*      The grid: header, cells, totals, status bar, popups, and
                          the left-click/drag "paint full marks" gesture.
-  ui/CellEditor.*        Cell editor popup + student (no-submission) menu popup.
+  ui/CellEditor.*        Cell editor popup (general + per-sub-question notes, §9c) +
+                         student (no-submission) menu popup + the notes-viewer windows.
   ui/BidiInput.*         BiDi-aware WYSIWYG note field (Hebrew/RTL editing, §9c).
   ui/widgets.*           fmtNum(), greenTickCheckbox(), bigTitle(), the notes-font
-                         push/pop + BiDi display helpers (noteVisual/noteIsRtl, §9c).
+                         push/pop + BiDi display helpers (noteVisual/cellNoteLinesVisual, §9c).
   ui/platform_dialogs.*  Native Win32 open/save file dialogs (commdlg).
   ui/QuestionImages.*    Column-header image menu (add/preview/remove) + preview window.
   ui/ImageStore.*        Loads images -> D3D11 textures for ImGui::Image (uses stb_image).
@@ -160,15 +161,33 @@ Header-only, GUI-free, unit-testable. Core structs:
 enum class SplitMode { Equal, Custom };
 enum class TextDir  { Auto, LTR, RTL }; // note base direction (Hebrew/RTL, §9c)
 
+// Suggestion-pool entry (per question), offered as a clickable pick in the cell
+// editor. sub == -1 = the general (whole-cell) note bucket. Append-only.
+struct NoteSuggestion {
+    int         sub = -1;
+    std::string text;
+    TextDir     dir = TextDir::Auto;
+};
+
 struct Question {
     std::string title = "Q1";
     double      maxPoints = 10.0;
     int         subCount  = 1;
     SplitMode   split     = SplitMode::Equal;
-    std::vector<double> subPoints; // size == subCount once normalized
-    std::vector<QuestionImage> images; // attached screenshots / solution refs (§9b)
+    std::vector<double>      subPoints; // size == subCount once normalized
+    std::vector<std::string> subLabels; // size == subCount once normalized; "" = numeric fallback (§9c)
+    std::vector<QuestionImage> images;    // attached screenshots / solution refs (§9b)
+    std::vector<NoteSuggestion> noteSuggestions; // per-sub note suggestion pool (§9c)
     bool        folded    = false;  // column collapsed to a narrow, locked strip (§9)
     float       viewWidth = 190.0f; // base (un-zoomed) column width in px (§9)
+};
+
+// One note on a specific sub-question of a cell. Sparse: only subs with non-empty
+// text get an entry, at most one per sub, kept sorted by `sub`.
+struct SubNote {
+    int         sub = 0;
+    std::string text;
+    TextDir     dir = TextDir::Auto;
 };
 
 struct Cell {
@@ -177,8 +196,9 @@ struct Cell {
     int               subAnswered = 0;     // answered count (defaults to subCount)
     std::vector<char> subChecks;           // Custom split: per-sub answered flags (1=answered)
     std::string       lastPage;            // resume marker (stored as text; edited as int)
-    std::string       note;
+    std::string       note;                // the "general" (whole-cell) note
     TextDir           noteDir     = TextDir::Auto; // note base direction (Hebrew/RTL, §9c)
+    std::vector<SubNote> subNotes;         // per-sub-question notes (§9c)
     bool              touched     = false; // distinguishes blank from an explicit 0
 };
 
@@ -200,25 +220,41 @@ drives it for a **Custom** split and is empty for Equal.
 Helpers (inline in the header — keep them header-only so the non-GUI test build
 doesn't need extra .cpp linkage):
 - `equalShare(q)` = points per sub-question under an equal split.
-- `normalizeQuestion(q)` — clamp subCount ≥ 1; size `subPoints` (Equal re-derives
-  all shares; Custom preserves values, pads/truncates to subCount).
+- `normalizeQuestion(q)` — clamp subCount ≥ 1; size `subPoints` and `subLabels`
+  (Equal re-derives all shares; Custom preserves values, pads/truncates to
+  subCount; labels pad with `""`/truncate the same way). Also drops
+  `noteSuggestions` entries whose `sub` is `< -1`, `>= subCount`, or whose `text`
+  is empty (`-1`, the general bucket, is always kept).
 - `blankCell(q)` — a fresh cell defaulting to **all sub-questions answered**
   (`subAnswered = subCount`; Custom `subChecks` all-1). Use it (not `Cell{}`) when
   creating/clearing cells so grading starts from full marks.
 - `lockedSubPoints(q, c)` — points locked out by skipped sub-questions (Equal:
   `skipped * equalShare`; Custom: sum of the skipped `subPoints`).
 - `ensureShape(p)` — make the grid rectangular: normalize questions, assign IDs
-  `1..N`, resize rows, and keep each cell's `subAnswered`/`subChecks` consistent
-  with its question. Called after every load.
+  `1..N`, resize rows, keep each cell's `subAnswered`/`subChecks` consistent with
+  its question, and rebuild `subNotes` (drop out-of-range/empty entries, keep the
+  first per sub, re-sort). Called after every load.
 - `makeProject(name, N, questions)` — build an N×M project of `blankCell`s.
 - `firstGradingDiff(a, b)` — first `(row, col)` where two `students` vectors differ,
   scanning row-major; `{-1, -1}` if identical, `{row, 0}` for a row-level change
   (noSubmission / row length). Used by undo/redo (§8b) to jump the selection to the
   reverted cell.
+- `subHeader(q, k)` — sub-question `k`'s display header: its `subLabels[k]` if
+  non-empty, else the 1-based number as a string (§9c).
+- `findSubNote(c, sub)` (const/non-const) — the cell's `SubNote` for that sub, or
+  `nullptr`. `setSubNote(c, sub, text, dir)` — set it, or erase it if `text` is
+  empty; keeps `subNotes` sorted/unique. `cellHasAnyNote(c)` —
+  `!note.empty() || !subNotes.empty()`.
+- `addNoteSuggestion(q, sub, text, dir)` — append `text` to the question's
+  suggestion pool for `sub` unless it's empty or an exact `(sub, text)` duplicate
+  already exists; returns whether it was added. The pool is **append-only**: an
+  edited pick is a new entry, the original stays (§9c).
 
 `Cell` and `Student` have a **defaulted `operator==`** (C++20) — every field
-participates. The undo history (§8b) uses it to tell whether a grading edit actually
-changed the grid (so image-only edits don't fabricate a dead undo step).
+participates, including `subNotes` (`SubNote` also has a defaulted `operator==`).
+The undo history (§8b) uses it to tell whether a grading edit actually changed the
+grid (so image-only edits, and — like images — `Question`-level `subLabels`/
+`noteSuggestions` edits, don't fabricate a dead undo step; see §8).
 
 ---
 
@@ -309,7 +345,14 @@ Per-cell effective points, **highest precedence first**:
   `Cell::noteDir` is serialized as an int (`0=Auto`) and older files that omit the
   key load as `Auto` — additive, so it stayed on schema 2. Likewise
   `Question::folded` / `Question::viewWidth` (§9) load as `false` / `190` when absent
-  (`viewWidth` is floored at the folded-strip width) — still schema 2.
+  (`viewWidth` is floored at the folded-strip width) — still schema 2. The same holds
+  for the per-sub-question notes fields (§9c): `Cell::subNotes` (array of
+  `{sub, text, dir}`, mirroring `subChecks`/`QuestionImage`), `Question::subLabels`
+  (plain `vector<string>`), and `Question::noteSuggestions` (array of
+  `{sub, text, dir}`) all default to empty when the key is missing — additive, no
+  migration branch, still schema 2. `ensureShape` prunes any out-of-range/empty
+  entries a hand-edited or foreign file might contain (same defensive pattern as the
+  image sub-question tags).
 - Config: `%APPDATA%\BodeX\config.json` holds the recent-projects list **and the
   pending-autosave record** (`AutosaveRecord`, §8c); `%APPDATA%\BodeX\projects\` is
   the suggested (not enforced) save dir and `%APPDATA%\BodeX\autosave\` holds the
@@ -365,6 +408,18 @@ Each fills the main viewport work area (below the menu bar). Popups
 (cell editor, student menu, unsaved prompt) are opened via `OpenPopup` and drawn
 after their trigger.
 
+**Per-sub-question notes** (§9c) add a small slice of `App` state alongside the
+image-preview fields: `editorNoteSub` (the cell editor's current note target, `-1` =
+general), a **pending-suggestion commit latch** (`noteCommitStudent/-Question/-Sub`
++ `noteTargetValid`, refreshed every frame the cell editor draws a note target) that
+`commitPendingNoteSuggestion()` reads to offer that target's live text into the
+question's suggestion pool, `editorWasOpen` (last-frame `CellEditor` popup-open state,
+for close detection), `labelsQuestion`/`requestOpenSubLabels` (the column-menu
+sub-question-labels popup target), and `notesWins`/`nextNotesWinId` (the badge's
+notes-viewer windows, mirroring `previews`/`nextPreviewId`). All of it is reset in
+`applyLoadedProject`/`closeProject`/`restoreFromAutosave` alongside the other
+per-project view state.
+
 ---
 
 ## 8b. Undo / redo history (`App.cpp`)
@@ -376,11 +431,22 @@ types, so a copy of a realistic grid is tens of KB (sub-millisecond). State on `
 last-committed grading state), `undoPending_`, and `kUndoDepth` (100).
 
 **Why students-only.** Questions are edited only *before* creation (New Project
-screen); post-creation the sole mutable part of `project.questions` is `images`. So
-"grading data" is exactly `project.students`. Snapshotting only that (1) keeps
-question-image add/remove **out** of history — the confirmed scope — and (2) leaves
-`App::previews` valid across a restore (they index into `questions[].images`, which
-restore never touches), so open preview windows aren't disturbed.
+screen); post-creation the mutable parts of `project.questions` are `images` and,
+since §9c, `subLabels` / `noteSuggestions`. So "grading data" is exactly
+`project.students` — a **cell's own note fields** (`note`, `noteDir`, `subNotes`) live
+on `Cell` and *are* undoable (they participate in the defaulted `operator==`, §5), but
+a **question's** labels and its note-suggestion pool are `Question`-level, like
+`images`, and are not. Snapshotting only `students` (1) keeps question-image add/
+remove, sub-question-label edits, and suggestion-pool growth **out** of history — the
+confirmed scope (labels/suggestions are metadata *about* the question, not a grading
+action on a student) — and (2) leaves `App::previews`/`notesWins` valid across a
+restore (they index into `project.questions`/`project.students` by position, which
+restore never reshapes), so open preview/notes windows aren't disturbed. This is also
+why `commitPendingNoteSuggestion()` growing the pool is safe to call at every settle
+boundary (chip switch, editor close, save) even mid-grading-edit: it calls
+`markDirty()`, but since it never touches `project.students`, it can't itself
+fabricate a history entry — `maybeCommitUndo`'s `students == undoBaseline_` guard
+skips it exactly like an image edit.
 
 **How it commits (no per-site instrumentation).** `markDirty()` — the one signal all
 19 grading mutation sites already call (§6, §9) — now also sets `undoPending_`.
@@ -522,6 +588,19 @@ line 2 = `lp: <lastPage>`. Colors: green for full-tick, orange (`kOverBtn`) when
 disabled. The table uses `ScrollX|ScrollY|Resizable|SizingFixedFit`, frozen header
 row + ID column (`TableSetupScrollFreeze(1,1)`), and an `ImGuiListClipper` for
 rows.
+
+**Note badge** (§9c): a cell with `gt::cellHasAnyNote(c)` gets a small drawlist
+`"n"` square in its top-right corner (`renderGradeCell`; `renderFoldedCell` draws no
+badge — a folded column is a locked, non-interactive strip). `badgeHovered` comes
+from `IsMouseHoveringRect` over the badge's rect, which is **occlusion-blind**
+(same caveat as the paint gesture above) — so it's only ever read inside the
+existing occlusion-aware `leftClicked` branch: a badge hit opens the notes-viewer
+window (`openNotesWindow`, `CellEditor.cpp`) instead of the cell editor. No second
+ImGui item is created for the badge, so `g_cellRects`, right-click paint, and the
+selection-outline draw are all untouched. The hover **tooltip** is gated on
+`cellHasAnyNote` (not `touched || fullTick` as before — a blank cell can still carry
+a sub-question note) and shows every line from `gt::ui::cellNoteLinesVisual` (§9c)
+joined with `\n`, under `pushNotesFont()`.
 
 **Column view: zoom, size-to-fit, and folding (`GradingTable.cpp`).** Three related
 column-management controls, all persisted per-question except the zoom:
@@ -730,6 +809,92 @@ font is ASCII-only. So the feature is these cooperating pieces:
   disk exactly as typed. `Cell::noteDir` (`TextDir{Auto,LTR,RTL}`, §5/§7) is the base-
   direction override, toggled with **Ctrl+Left-Shift / Ctrl+Right-Shift** while focused
   (`Auto` = first strong char). The grid hover **tooltip** reuses `gt::ui::noteVisual`.
+- **Compact mode.** `bidiNoteInput(..., bool compact = false)` hides the `dir:`
+  radio row + resolved-direction indicator when `compact = true`, for short inline
+  fields (sub-question labels, both in `NewProjectScreen` and the column-menu
+  editor below) — the clear (×) button and the Ctrl+Shift direction toggles still
+  work either way. Existing call sites (the cell editor's general note) compile
+  unchanged with the default.
+
+**Per-sub-question notes.** A question with `subCount >= 2` disambiguates *which*
+sub-question a note is about, on top of the general (whole-cell) note that already
+existed:
+
+- **Model** (§5): `Question::subLabels` (free-text, Hebrew-capable, `""` = numeric
+  fallback via `subHeader`) and `Question::noteSuggestions` (an append-only pool,
+  keyed by `sub`, `-1` = general); `Cell::subNotes` (sparse `SubNote{sub, text,
+  dir}`, one per sub). All additive JSON, no schema bump (§7).
+- **Labels.** Set per sub-question at project creation (`NewProjectScreen`, next to
+  the sub-points row, `subCount >= 2`) or later via the column header's right-click
+  **ColumnMenu → "Sub-question labels..."** (`GradingTable.cpp`, file-local
+  `subLabelsPopup`) — both use `bidiNoteInput(..., compact=true)` per sub. Opening
+  `SubLabels` is **deferred** to the same top-level call as `BeginPopup("SubLabels")`
+  (`app.requestOpenSubLabels`, checked in `gradingScreen`'s popup-deferral block) —
+  triggering `OpenPopup` from inside `ColumnMenu`'s own `MenuItem` click handler
+  would hash to *that* popup's id stack and never match (the same reasoning as the
+  unsaved-changes-modal deferred open, §8).
+- **Target chips** (`CellEditor.cpp`, `cellEditorPopup`). When `q.subCount >= 2`, a
+  row of small `Button`s — `[general]` then one per sub, labeled
+  `noteVisual(subHeader(q, k))` — sits above the note field; the active target's
+  button is recolored. Clicking a chip is a **settle boundary**: it calls
+  `app.commitPendingNoteSuggestion()` (offering the *previous* target's current text
+  to the pool) *then* sets `editorNoteSub = k`. Each chip's ImGui id is
+  `"...###tgt<k>"` (`###` pins the id past a label that theoretically could change,
+  though in practice it doesn't) so the active-button styling and clicks stay stable
+  across frames. `subCount < 2` forces `editorNoteSub = -1` — no ambiguity to
+  disambiguate.
+- **Per-target editing.** The general note (`editorNoteSub == -1`) binds
+  `Cell::note`/`noteDir` directly, unchanged from before (id `"##note"`, so
+  `BODEX_FOCUS_NOTE` still finds it). A sub-question target is **copy-out /
+  write-back**: locals seeded from `findSubNote(c, sub)` (or empty) are handed to
+  `bidiNoteInput`, and only on a real change does `setSubNote(c, sub, text, dir)`
+  write the model — so just *opening* the editor and looking at an unset sub never
+  creates an empty `SubNote` (no phantom dirty/undo churn). Each sub's field uses a
+  **per-target id** (`"##note_s<k>"`) — mandatory, not cosmetic: ImGui keys its
+  active-edit buffer by widget id, so reusing one id across targets would let a
+  half-typed edit bleed from one sub-question's note into another's when you switch
+  chips mid-type.
+- **Suggestions.** Below the field, `q.noteSuggestions` filtered to `sub ==
+  editorNoteSub`, **newest-first**, in a bordered child capped at ~6 rows. Each row
+  is a `Selectable("##sugg<i>", …, ImGuiSelectableFlags_DontClosePopups)` with the
+  visible text drawn separately via `AddText` — a *plain* label would get truncated
+  by ImGui at the first `##` inside actual note text, so the id and the display text
+  are deliberately decoupled. Clicking a row writes the target's note/dir straight
+  into the model (general or via `setSubNote`) and marks it touched/dirty.
+- **Commit boundaries** (`App::commitPendingNoteSuggestion`, §8). The cell editor
+  refreshes a latch (`noteCommitStudent/-Question/-Sub`, `noteTargetValid`) to the
+  target it just drew, **every frame** — so whichever target was on-screen most
+  recently is what a later commit offers. Three boundaries call it: a **chip
+  click** (commits the outgoing target), the **editor closing** (`editorWasOpen &&
+  !IsPopupOpen("CellEditor")`, checked in `gradingScreen` right after
+  `cellEditorPopup` — catches the Close button, Esc, *and* a click outside the
+  non-modal popup, all of which just stop the popup from being open next frame with
+  no single call site to hook), and **`doSave()`** (so a mid-edit note-in-progress
+  is captured before the JSON is written). `addNoteSuggestion`'s exact-dedup makes
+  every one of these **idempotent** — calling it redundantly (e.g. re-clicking the
+  already-active chip) just re-offers the same text, which is refused as a
+  duplicate. A **cell re-click while the editor is already open** (same popup id,
+  new `editorStudent`/`editorQuestion`) is handled at the top of `cellEditorPopup`:
+  if the latch's target no longer matches the newly-clicked cell, commit it first
+  and reset `editorNoteSub = -1` before drawing the new cell.
+- **Badge + notes viewer** (§9 above): `gt::cellHasAnyNote(c)` drives the grid
+  badge; clicking it calls `openNotesWindow(app, student, question)`
+  (`CellEditor.cpp`) — dedup-per-cell like `openPreview` (§9b): an existing window
+  for that cell is raised (`focusNext`), else a new `NotesWin{id, student, question,
+  focusNext, open}` is pushed onto `App::notesWins`. `notesViewerWindows(app)`
+  (called after `imagePreviewWindows` — both feed `App::anyPreviewFocused`, and
+  `imagePreviewWindows` is what resets it each frame, so the notes window's
+  contribution must be layered on *after* the reset, not before) draws each open
+  window (`"Notes - Student %d - %s###bodex_notes_<id>"`, body =
+  `gt::ui::cellNoteLinesVisual` under `pushNotesFont()`, or a disabled `(no notes)`
+  if the cell's notes were since cleared — the window stays open rather than
+  vanishing out from under you), skips while `IsPopupOpen("Unsaved Changes")`
+  (same reasoning as image previews, §9b), and prunes closed entries afterward.
+- `gt::ui::cellNoteLinesVisual(q, c)` (`widgets.*`) is the one shared formatter: the
+  general note first (no prefix) if set, then each `subNotes` entry as
+  `subHeader(q, sub) + ": " + text`, each line independently reordered via
+  `noteVisual` with **that note's own** direction. Used by both the grid tooltip and
+  the notes-viewer window body, so they can never drift apart.
 
 ## 9d. Focus view (one question at a time)
 
@@ -844,9 +1009,11 @@ Reset in `App::resetColumnView` (so every new/open/close/restore starts in the g
 
 ## 12. Verifying changes (do this, don't just build)
 
-- **Core logic:** `mingw32-make test` (264 checks: scoring rules incl. sub-question
+- **Core logic:** `mingw32-make test` (332 checks: scoring rules incl. sub-question
   sync, one-press `stepAwarded`, and `isFullMarks`, JSON string + on-disk round-trip,
-  the per-question `folded`/`viewWidth` view state (§9), recent-alias regression,
+  the per-question `folded`/`viewWidth` view state (§9), the per-sub-question notes
+  fields and helpers (§9c: `setSubNote`/`findSubNote`/`subHeader`/
+  `addNoteSuggestion`, additive-defaults + pruning on load), recent-alias regression,
   `config <-> JSON` round-trip incl. the autosave record (§8c), `Cell`/`Student`
   `operator==` and `firstGradingDiff` for the undo history (§8b), plus the pure
   `buildBmpFromDib` clipboard-paste header math (§9b)). Add cases when you touch

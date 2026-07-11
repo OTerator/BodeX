@@ -3,9 +3,10 @@
 // Small shared ImGui helpers used across screens.
 
 #include <string>
+#include <vector>
 #include "imgui.h"
 
-namespace gt { enum class TextDir; } // defined in model/Project.h
+namespace gt { enum class TextDir; struct Question; struct Cell; } // defined in model/Project.h
 
 namespace gt::ui {
 
@@ -33,5 +34,11 @@ void    popNotesFont();
 // given direction — used for read-only display (the grid hover tooltip). Pair with
 // pushNotesFont() when drawing the result.
 std::string noteVisual(const std::string& logicalUtf8, gt::TextDir dir);
+
+// All of a cell's notes as display-ready (visual-order) lines: the general note
+// first (no prefix, if set), then each per-sub-question note as "<header>: <text>".
+// Empty if the cell has no notes. Used by the grid hover tooltip and the notes
+// viewer window; pair with pushNotesFont() at the call site.
+std::vector<std::string> cellNoteLinesVisual(const gt::Question& q, const gt::Cell& c);
 
 } // namespace gt::ui

@@ -2,6 +2,7 @@
 
 #include "app/App.h"
 #include "ui/widgets.h"
+#include "ui/BidiInput.h"
 #include "model/Project.h"
 #include "imgui.h"
 #include "imgui_stdlib.h"
@@ -108,6 +109,22 @@ void newProjectScreen(App& app)
         } else {
             ImGui::Indent(50);
             ImGui::TextDisabled("each of %d sub-questions = %s pts", q.subCount, fmtNum(gt::equalShare(q)).c_str());
+            ImGui::Unindent(50);
+        }
+
+        if (q.subCount >= 2) {
+            if (static_cast<int>(q.subLabels.size()) != q.subCount)
+                q.subLabels.resize(static_cast<size_t>(q.subCount));
+            ImGui::Indent(50);
+            ImGui::TextDisabled("sub-question labels (optional):");
+            for (int k = 0; k < q.subCount; ++k) {
+                ImGui::PushID(k);
+                gt::TextDir tmp = gt::TextDir::Auto; // labels persist no direction of their own
+                bidiNoteInput("##lbl", q.subLabels[static_cast<size_t>(k)], tmp, 110.0f, true);
+                ImGui::PopID();
+                if ((k % 6) != 5 && k != q.subCount - 1)
+                    ImGui::SameLine();
+            }
             ImGui::Unindent(50);
         }
 

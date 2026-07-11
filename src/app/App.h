@@ -43,6 +43,16 @@ struct PreviewWin {
     bool  open      = true;  // cleared -> window closed, erased after the draw loop
 };
 
+// One open, non-modal notes-viewer window (badge click on a noted cell). Lists all
+// of one cell's notes line-by-line; several can be open at once, one per cell.
+struct NotesWin {
+    int  id        = 0;
+    int  student    = -1;   // index into project.students
+    int  question   = -1;   // index into project.questions
+    bool focusNext  = false; // raise/focus this window next frame (open-or-raise)
+    bool open       = true;  // cleared -> window closed, erased after the draw loop
+};
+
 // App lives in the global namespace to match main.cpp's `App app;`.
 class App {
 public:
@@ -125,6 +135,30 @@ public:
     int               addImageRole = 0;     // 0 = Question, 1 = Solution
     std::string       addImageCaption;
     std::vector<char> addImageSubs;         // per sub-question checkbox state
+
+    // Per-sub-question notes: the cell editor's current note target (-1 = general,
+    // else a 0-based sub-question index) and a "pending suggestion" commit latch —
+    // the (student, question, sub) last edited, so a picked note gets offered back as
+    // a suggestion once the edit settles (target switch, editor close, or save).
+    int  editorNoteSub      = -1;
+    int  noteCommitStudent  = -1;
+    int  noteCommitQuestion = -1;
+    int  noteCommitSub      = -1;
+    bool noteTargetValid    = false; // the commit latch above targets a real edit
+    bool editorWasOpen      = false; // last-frame CellEditor open state (close detection)
+
+    // Column-header sub-question-labels popup target.
+    int  labelsQuestion        = -1;
+    bool requestOpenSubLabels  = false;
+
+    // Open notes-viewer windows (badge click on a noted cell; non-modal, several at once).
+    std::vector<NotesWin> notesWins;
+    int                    nextNotesWinId = 1;
+
+    // Offer the current note-edit target's live text as a suggestion (append-only,
+    // exact-dedup) if it's non-empty. Idempotent, so it's safe to call at every edit
+    // boundary (target switch, editor close, save).
+    void commitPendingNoteSuggestion();
 
     // ---- actions invoked by screens/menu ----
     void newProjectStart();                          // -> NewProject screen, fresh draft

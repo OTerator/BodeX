@@ -185,7 +185,7 @@ float computeOrigin(EditState& st, const Layout& L, float viewLeft, float viewRi
 
 } // namespace
 
-bool bidiNoteInput(const char* id, std::string& text, gt::TextDir& dir, float width)
+bool bidiNoteInput(const char* id, std::string& text, gt::TextDir& dir, float width, bool compact)
 {
     ImGuiIO& io = ImGui::GetIO();
     ImGuiStyle& style = ImGui::GetStyle();
@@ -298,16 +298,18 @@ bool bidiNoteInput(const char* id, std::string& text, gt::TextDir& dir, float wi
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear note");
     }
 
-    // --- Direction control + resolved-direction indicator. ---
-    ImGui::TextDisabled("dir:");
-    ImGui::SameLine();
-    int di = static_cast<int>(dir);
-    ImGui::RadioButton("Auto##notedir", &di, 0); ImGui::SameLine();
-    ImGui::RadioButton("LTR##notedir",  &di, 1); ImGui::SameLine();
-    ImGui::RadioButton("RTL##notedir",  &di, 2); ImGui::SameLine();
-    if (di != static_cast<int>(dir)) { dir = static_cast<gt::TextDir>(di); changed = true; }
-    ImGui::TextDisabled(baseRtl ? "reads R-to-L   (Ctrl+Shift toggles)"
-                                : "reads L-to-R   (Ctrl+Shift toggles)");
+    // --- Direction control + resolved-direction indicator (skipped when compact). ---
+    if (!compact) {
+        ImGui::TextDisabled("dir:");
+        ImGui::SameLine();
+        int di = static_cast<int>(dir);
+        ImGui::RadioButton("Auto##notedir", &di, 0); ImGui::SameLine();
+        ImGui::RadioButton("LTR##notedir",  &di, 1); ImGui::SameLine();
+        ImGui::RadioButton("RTL##notedir",  &di, 2); ImGui::SameLine();
+        if (di != static_cast<int>(dir)) { dir = static_cast<gt::TextDir>(di); changed = true; }
+        ImGui::TextDisabled(baseRtl ? "reads R-to-L   (Ctrl+Shift toggles)"
+                                    : "reads L-to-R   (Ctrl+Shift toggles)");
+    }
 
     popNotesFont();
     return changed;

@@ -38,11 +38,54 @@ QuestionImage imageFromJson(const json& j)
     return im;
 }
 
+json subNoteToJson(const SubNote& sn)
+{
+    return json{
+        {"sub", sn.sub},
+        {"text", sn.text},
+        {"dir", static_cast<int>(sn.dir)},
+    };
+}
+
+SubNote subNoteFromJson(const json& j)
+{
+    SubNote sn;
+    sn.sub  = j.value("sub", 0);
+    sn.text = j.value("text", std::string());
+    int d   = j.value("dir", 0);
+    if (d < 0 || d > 2) d = 0;
+    sn.dir  = static_cast<TextDir>(d);
+    return sn;
+}
+
+json noteSuggestionToJson(const NoteSuggestion& s)
+{
+    return json{
+        {"sub", s.sub},
+        {"text", s.text},
+        {"dir", static_cast<int>(s.dir)},
+    };
+}
+
+NoteSuggestion noteSuggestionFromJson(const json& j)
+{
+    NoteSuggestion s;
+    s.sub  = j.value("sub", -1);
+    s.text = j.value("text", std::string());
+    int d  = j.value("dir", 0);
+    if (d < 0 || d > 2) d = 0;
+    s.dir  = static_cast<TextDir>(d);
+    return s;
+}
+
 json cellToJson(const Cell& c)
 {
     json subChecks = json::array();          // Custom-split per-sub answered flags
     for (char v : c.subChecks)
         subChecks.push_back(v ? 1 : 0);
+    json subNotes = json::array();
+    for (const auto& sn : c.subNotes)
+        subNotes.push_back(subNoteToJson(sn));
     return json{
         {"fullTick", c.fullTick},
         {"awarded", c.awarded},
@@ -51,6 +94,7 @@ json cellToJson(const Cell& c)
         {"lastPage", c.lastPage},
         {"note", c.note},
         {"noteDir", static_cast<int>(c.noteDir)},
+        {"subNotes", std::move(subNotes)},
         {"touched", c.touched},
     };
 }
@@ -69,6 +113,9 @@ Cell cellFromJson(const json& j)
     int nd        = j.value("noteDir", 0);            // additive; old files -> Auto (0)
     if (nd < 0 || nd > 2) nd = 0;
     c.noteDir     = static_cast<TextDir>(nd);
+    if (j.contains("subNotes") && j.at("subNotes").is_array())
+        for (const auto& jsn : j.at("subNotes"))
+            c.subNotes.push_back(subNoteFromJson(jsn));
     c.touched     = j.value("touched", false);
     return c;
 }
@@ -78,13 +125,18 @@ json questionToJson(const Question& q)
     json images = json::array();
     for (const auto& im : q.images)
         images.push_back(imageToJson(im));
+    json noteSuggestions = json::array();
+    for (const auto& s : q.noteSuggestions)
+        noteSuggestions.push_back(noteSuggestionToJson(s));
     return json{
         {"title", q.title},
         {"maxPoints", q.maxPoints},
         {"subCount", q.subCount},
         {"split", splitToStr(q.split)},
         {"subPoints", q.subPoints},
+        {"subLabels", q.subLabels},
         {"images", std::move(images)},
+        {"noteSuggestions", std::move(noteSuggestions)},
         {"folded", q.folded},         // view state; additive, old files -> false
         {"viewWidth", q.viewWidth},   // additive, old files -> 190
     };
@@ -99,9 +151,14 @@ Question questionFromJson(const json& j)
     q.split     = splitFromStr(j.value("split", std::string("equal")));
     if (j.contains("subPoints") && j.at("subPoints").is_array())
         q.subPoints = j.at("subPoints").get<std::vector<double>>();
+    if (j.contains("subLabels") && j.at("subLabels").is_array())
+        q.subLabels = j.at("subLabels").get<std::vector<std::string>>();
     if (j.contains("images") && j.at("images").is_array())
         for (const auto& ji : j.at("images"))
             q.images.push_back(imageFromJson(ji));
+    if (j.contains("noteSuggestions") && j.at("noteSuggestions").is_array())
+        for (const auto& js : j.at("noteSuggestions"))
+            q.noteSuggestions.push_back(noteSuggestionFromJson(js));
     q.folded    = j.value("folded", false);          // additive; old files -> unfolded
     q.viewWidth = j.value("viewWidth", 190.0f);       // additive; old files -> 190
     if (q.viewWidth < 34.0f) q.viewWidth = 34.0f;     // floor == kFoldedWidth (GradingTable)
