@@ -120,13 +120,17 @@ src/
                          open/save/close actions, the "paint full marks" gesture state.
   ui/HomeScreen.*        Launcher: New / Open / recent projects.
   ui/NewProjectScreen.*  Table-size + per-question config; live total-points counter.
+  ui/ProjectSettingsScreen.* Post-creation structure editor (§8d): name/rows/questions,
+                         add/remove columns, Apply -> gt::reshapeProject (+ warn modal).
   ui/GradingTable.*      The grid: header, cells, totals, status bar, popups, and
                          the left-click/drag "paint full marks" gesture.
   ui/CellEditor.*        Cell editor popup (general + per-sub-question notes, §9c) +
                          student (no-submission) menu popup + the notes-viewer windows.
   ui/BidiInput.*         BiDi-aware WYSIWYG note field (Hebrew/RTL editing, §9c).
-  ui/widgets.*           fmtNum(), greenTickCheckbox(), bigTitle(), the notes-font
-                         push/pop + BiDi display helpers (noteVisual/cellNoteLinesVisual, §9c).
+  ui/widgets.*           fmtNum(), greenTickCheckbox(), bigTitle(), questionConfigBlock()
+                         (shared per-question config UI, New Project + Project Settings),
+                         the notes-font push/pop + BiDi display helpers
+                         (noteVisual/cellNoteLinesVisual, §9c).
   ui/platform_dialogs.*  Native Win32 open/save file dialogs (commdlg).
   ui/QuestionImages.*    Column-header image menu (add/preview/remove) + preview window.
   ui/ImageStore.*        Loads images -> D3D11 textures for ImGui::Image (uses stb_image).
@@ -235,6 +239,10 @@ doesn't need extra .cpp linkage):
   its question, and rebuild `subNotes` (drop out-of-range/empty entries, keep the
   first per sub, re-sort). Called after every load.
 - `makeProject(name, N, questions)` — build an N×M project of `blankCell`s.
+- `reshapeProject(p, newQuestions, originalIndex, newStudentCount)` — edit an existing
+  project's structure in place, carrying grades where a column/row is retained
+  (`originalIndex[j]` = source column, `-1` = new); grows/shrinks rows from the end and
+  runs `ensureShape`. Drives the Project Settings screen (§8d).
 - `firstGradingDiff(a, b)` — first `(row, col)` where two `students` vectors differ,
   scanning row-major; `{-1, -1}` if identical, `{row, 0}` for a row-level change
   (noSubmission / row length). Used by undo/redo (§8b) to jump the selection to the
@@ -430,9 +438,12 @@ types, so a copy of a realistic grid is tens of KB (sub-millisecond). State on `
 `undoStack_`, `redoStack_` (`vector<vector<gt::Student>>`), `undoBaseline_` (the
 last-committed grading state), `undoPending_`, and `kUndoDepth` (100).
 
-**Why students-only.** Questions are edited only *before* creation (New Project
-screen); post-creation the mutable parts of `project.questions` are `images` and,
-since §9c, `subLabels` / `noteSuggestions`. So "grading data" is exactly
+**Why students-only.** Question *structure* is edited on the New Project screen and,
+post-creation, on the **Project Settings** screen (§8d) — but the latter is **not** a
+grading action: it reshapes the whole grid and **clears the history** (`resetHistory`,
+like a project swap), so no undo snapshot ever straddles a question-set change. During
+normal grading the mutable parts of `project.questions` are just `images` and, since
+§9c, `subLabels` / `noteSuggestions`. So "grading data" is exactly
 `project.students` — a **cell's own note fields** (`note`, `noteDir`, `subNotes`) live
 on `Cell` and *are* undoable (they participate in the defaulted `operator==`, §5), but
 a **question's** labels and its note-suggestion pool are `Question`-level, like
@@ -525,6 +536,52 @@ file, adopts it like `applyLoadedProject` but sets `projectPath` from the record
 `""` for a never-saved project — marks it `dirty`, and **keeps** the record so the next
 tick overwrites the same file) or **Discard** → `clearAutosave()`. The BODEX_DEMO project
 sets `demoMode_` and is never autosaved (so it can't fabricate a recovery prompt).
+
+---
+
+## 8d. Project Settings (post-creation structure editing)
+
+**File → Project Settings…** opens a full screen (`Screen::ProjectSettings`,
+`ui/ProjectSettingsScreen.cpp`) to edit an existing project's structure — name,
+student count, and per-question setup — **after** creation, preserving grades. Before
+this, question structure was fixed once the grid existed (only images / sub-labels /
+note-suggestions were mutable). Menu item is gated on `hasProject`.
+
+- **Working copy.** `App::openProjectSettings` snapshots the live structure into
+  `App::settings` (a `gt::ProjectSettingsDraft`: `name`, `studentCount`,
+  `origStudentCount`, a copy of `questions`, and a parallel `originalIndex` — each
+  column's source index, `-1` = added on this screen). The screen edits only this copy,
+  so **Cancel** (→ `Screen::Grading`) has zero side effects. Per-question fields reuse
+  the shared `gt::ui::questionConfigBlock` (widgets.cpp), the same control block the New
+  Project screen draws; a per-question **Remove** button and a bottom **+ Add question**
+  button (originalIndex `-1`) do add/remove, and **Students (rows)** grows/shrinks from
+  the end (rows are interchangeable). Explicit add/remove — rather than a raw column
+  count — keeps the old→new column mapping unambiguous so retained columns keep grades.
+
+- **Apply = model reshape.** `App::tryApplyProjectSettings` first computes
+  `settingsChangeSummary()`; if it's empty (pure additions / rename) it applies
+  immediately, otherwise it raises the **"Apply Changes?"** confirm modal
+  (`renderSettingsConfirm`, deferred-open id-stack trick like `renderUnsavedPrompt`,
+  §8). `applyProjectSettings` calls the GUI-free, unit-tested
+  **`gt::reshapeProject(p, newQuestions, originalIndex, newStudentCount)`**
+  (`model/Project.h`): it rebuilds each student's `cells` in the new column order
+  (carry the old cell by `originalIndex`, else `blankCell`), swaps in the new questions,
+  grows/shrinks the student vector, and runs `ensureShape` — which re-syncs every
+  carried cell to its (possibly changed) `subCount`/`split`. Then it does the same
+  **view-state reset as a project swap** (`previews`/`notesWins` clear, `resetColumnView`,
+  `resetHistory`, `markDirty`) — history is cleared because prior undo snapshots are
+  shaped for the old questions (§8b).
+
+- **Grade-safety warning.** `settingsChangeSummary()` lists effects that touch existing
+  grades: a **deleted** question that carried grades, **removed students** that carried
+  grades, and a **retained** question whose `subCount`/`split`/`maxPoints`/`subPoints`
+  change alters an existing cell (it builds the reshape into a temp copy and compares
+  per-cell `operator==` / `cellPoints`). *Note:* growing an Equal question's `subCount`
+  makes an already-full cell read as `k/(k+1)` — one sub now counts as skipped — which
+  the summary flags as a recalculation; the grader re-fulls those cells if desired.
+
+- No schema change — only existing fields are mutated (`schemaVersion` stays 2). Tests:
+  `testReshapeProject` in `tests/test_core.cpp`.
 
 ---
 

@@ -27,6 +27,22 @@ struct NewProjectDraft {
     void reset();
 };
 
+// Transient working copy for the "Project Settings" screen (post-creation editing).
+// Edits a copy of the live structure so the user can Cancel with no side effects;
+// `originalIndex` is parallel to `questions` (-1 = a column added on this screen) and
+// tells reshapeProject which columns carry their existing grades. Applied via
+// App::applyProjectSettings -> gt::reshapeProject.
+struct ProjectSettingsDraft {
+    std::string           name;
+    int                   studentCount = 0;
+    int                   origStudentCount = 0;
+    std::vector<Question> questions;
+    std::vector<int>      originalIndex; // parallel to questions; -1 = new column
+
+    // Snapshot the current structure of `p` into this draft.
+    void loadFrom(const Project& p);
+};
+
 } // namespace gt
 
 // One open, non-modal image-preview window. Several can be open at once (e.g. a
@@ -62,7 +78,7 @@ public:
     void render();                       // draw the whole UI for this frame
     bool wantsQuit() const { return quit_; }
 
-    enum class Screen { Home, NewProject, Grading };
+    enum class Screen { Home, NewProject, Grading, ProjectSettings };
 
     // ---- state read/written by ui/* screen functions ----
     Screen              screen = Screen::Home;
@@ -72,6 +88,7 @@ public:
     bool                dirty = false;
     gt::AppConfig       config;
     gt::NewProjectDraft draft;
+    gt::ProjectSettingsDraft settings;   // working copy for the Project Settings screen
     std::string         statusMsg;       // transient message shown in the status bar
 
     // Cell editor popup target (-1 = none). requestOpenCellEditor is set the
@@ -169,6 +186,11 @@ public:
     bool doSaveAs();                                 // native save dialog -> save
     void closeProject();                             // guarded return to Home
     void requestQuit();                              // guarded quit
+
+    // ---- project settings (post-creation structure editing; see App.cpp §8d) ----
+    void openProjectSettings();     // snapshot structure into `settings` -> settings screen
+    void tryApplyProjectSettings(); // apply now if grades are safe, else raise the confirm modal
+    std::vector<std::string> settingsChangeSummary(); // grade-affecting effects of the pending edit
     void flushAutosave();                            // write the pending autosave now (focus-loss / close)
     void markDirty() { dirty = true; undoPending_ = true; } // also arms an undo checkpoint
 
@@ -226,6 +248,12 @@ private:
     void renderMenuBar();
     void renderShortcutsOverlay(); // F1 / Help -> "Keyboard Shortcuts" legend window
     void applyLoadedProject(gt::Project&& p, const std::string& path);
+
+    // Project Settings: commit `settings` to the live project and the confirm modal.
+    void applyProjectSettings();     // reshape the project + reset view/history, -> Grading
+    void renderSettingsConfirm();    // "Apply Changes?" modal (deferred-open, §8 id-stack)
+    bool openSettingsConfirm_ = false;        // deferred OpenPopup latch (mirrors openGuardPopup_)
+    std::vector<std::string> settingsSummary_; // effects shown in the confirm modal
 
     bool quit_ = false;
 };

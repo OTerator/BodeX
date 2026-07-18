@@ -157,6 +157,14 @@ BODEX_DEMO=1 ./build/BodeX.exe
    work is **autosaved** every ~30s (and when you switch away or quit); if BodeX
    closes unexpectedly, the next launch offers to **recover** it. Autosave is a safety
    net only — your `.json` is still written by Save.
+9. **Change the structure later.** **File → Project Settings…** re-opens the whole
+   project for editing after it exists: rename it, add/remove students, add/remove
+   questions, and change any question's points, sub-question count, split, or labels.
+   Existing grades are kept wherever a question or student is kept; a new column/row
+   starts blank. If a change would **alter or discard** existing grades (deleting a
+   graded question, removing graded students, or reshaping a question so its scores
+   recompute), BodeX lists the effects and asks you to confirm first. **Cancel**
+   discards the edits with no change. (Applying clears the undo history.)
 
 **Notes can be Hebrew (right-to-left).** The note field is bidirectional: Hebrew you
 type flows right-to-left and English left-to-right, the field right-aligns for Hebrew,

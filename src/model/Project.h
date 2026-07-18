@@ -328,6 +328,41 @@ inline Project makeProject(std::string name, int studentCount, std::vector<Quest
     return p;
 }
 
+// Rebuild an existing project's structure in place, preserving grades wherever a
+// column or row is retained. `newQuestions` is the target column set; `originalIndex`
+// is parallel to it — entry j >= 0 means "carry every student's cell from the old
+// column at that index", -1 means "a brand-new column" (filled with blankCell).
+// Rows grow with fresh blankCell students and shrink from the end. Runs ensureShape
+// at the end, so each carried cell is re-synced to its (possibly changed) question's
+// subCount/split. GUI-free / testable — the Project Settings screen drives it (§8d).
+inline void reshapeProject(Project& p, const std::vector<Question>& newQuestions,
+                           const std::vector<int>& originalIndex, int newStudentCount) {
+    // Reorder/carry each existing student's cells while p.questions still has the
+    // OLD shape (so originalIndex still points at the right source cells).
+    for (auto& s : p.students) {
+        std::vector<Cell> rebuilt;
+        rebuilt.reserve(newQuestions.size());
+        for (size_t j = 0; j < newQuestions.size(); ++j) {
+            const int oi = (j < originalIndex.size()) ? originalIndex[j] : -1;
+            if (oi >= 0 && static_cast<size_t>(oi) < s.cells.size())
+                rebuilt.push_back(s.cells[static_cast<size_t>(oi)]);
+            else
+                rebuilt.push_back(blankCell(newQuestions[j]));
+        }
+        s.cells = std::move(rebuilt);
+    }
+    p.questions = newQuestions;
+
+    if (newStudentCount < 0)
+        newStudentCount = 0;
+    if (static_cast<int>(p.students.size()) > newStudentCount)
+        p.students.resize(static_cast<size_t>(newStudentCount)); // shrink from the end
+    while (static_cast<int>(p.students.size()) < newStudentCount)
+        p.students.push_back(Student{});                          // ensureShape fills cells/id
+
+    ensureShape(p); // normalize questions + re-sync every cell to its question
+}
+
 // First cell (row, col) where two grading grids differ, scanning row-major;
 // {-1, -1} if identical. A row-level difference (e.g. noSubmission toggled, or a
 // changed row length) reports {row, 0}. Used by undo/redo to move the selection to

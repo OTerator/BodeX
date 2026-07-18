@@ -18,6 +18,13 @@ std::string fmtNum(double v);
 // value was toggled this frame.
 bool greenTickCheckbox(const char* label, bool* v);
 
+// One question's structure-config controls (title / points / sub-questions /
+// Equal-Custom split / sub-points / optional sub-question labels), as drawn on the
+// New Project and Project Settings screens. `index` is the 0-based column, used only
+// for the "Q<n>" label. Normalizes the question after any structural edit; returns
+// true if anything changed this frame (caller marks dirty). Caller owns the PushID.
+bool questionConfigBlock(gt::Question& q, int index);
+
 // Draw text using the current font family at a larger pixel size.
 void bigTitle(const char* text, float px = 26.0f);
 

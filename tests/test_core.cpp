@@ -837,6 +837,92 @@ static void testFirstGradingDiff()
     CHECK(d3.first == 0 && d3.second == 1);
 }
 
+// reshapeProject (Project.h): post-creation structure editing (Project Settings §8d).
+// Grades carry over where a column/row is retained; new columns/rows are blank;
+// removed ones drop; carried cells re-sync to their (possibly changed) question.
+static void testReshapeProject()
+{
+    Question qe; qe.title = "Qe"; qe.maxPoints = 20.0; qe.subCount = 4; qe.split = SplitMode::Equal;
+    Question qc; qc.title = "Qc"; qc.maxPoints = 10.0; qc.subCount = 2; qc.split = SplitMode::Custom;
+    qc.subPoints = {7.0, 3.0};
+    Project p = makeProject("Reshape", 3, {qe, qc}); // 3 students x 2 questions
+    p.students[0].cells[0].awarded = 20.0; p.students[0].cells[0].touched = true; // graded Qe
+    p.students[1].cells[1].fullTick = true;                                       // full Qc
+    ensureShape(p);
+
+    // 1. Add a sub-question to Qe (subCount 4 -> 5): grid stays rectangular, stored
+    //    awarded is preserved, and the other column's full tick survives.
+    {
+        std::vector<Question> nq = p.questions;
+        nq[0].subCount = 5; normalizeQuestion(nq[0]);
+        Project t = p;
+        reshapeProject(t, nq, {0, 1}, 3);
+        CHECK(t.questions.size() == 2);
+        CHECK(t.questions[0].subCount == 5);
+        CHECK(t.students.size() == 3);
+        for (const auto& s : t.students) CHECK(s.cells.size() == 2);
+        CHECK_NEAR(t.students[0].cells[0].awarded, 20.0);
+        CHECK(t.students[1].cells[1].fullTick);
+    }
+
+    // 2. Append a new question column (originalIndex -1): old grades carry, new col blank.
+    {
+        Question qn; qn.title = "Qnew"; qn.maxPoints = 5.0; qn.subCount = 1; qn.split = SplitMode::Equal;
+        normalizeQuestion(qn);
+        std::vector<Question> nq = p.questions; nq.push_back(qn);
+        Project t = p;
+        reshapeProject(t, nq, {0, 1, -1}, 3);
+        CHECK(t.questions.size() == 3);
+        for (const auto& s : t.students) CHECK(s.cells.size() == 3);
+        CHECK(!t.students[0].cells[2].touched && !t.students[0].cells[2].fullTick);
+        CHECK_NEAR(t.students[0].cells[0].awarded, 20.0);
+        CHECK(t.students[1].cells[1].fullTick);
+    }
+
+    // 3. Remove the first question: the second column's grade slides to index 0.
+    {
+        std::vector<Question> nq = {p.questions[1]};
+        Project t = p;
+        reshapeProject(t, nq, {1}, 3);
+        CHECK(t.questions.size() == 1);
+        CHECK(t.questions[0].title == "Qc");
+        CHECK(t.students[1].cells[0].fullTick);
+    }
+
+    // 4. Grow / shrink students from the end; new rows blank + ids assigned, existing kept.
+    {
+        Project t = p;
+        reshapeProject(t, p.questions, {0, 1}, 5);
+        CHECK(t.students.size() == 5);
+        CHECK(t.students[3].id == 4 && t.students[4].id == 5);
+        for (const auto& s : t.students) CHECK(s.cells.size() == 2);
+        CHECK(!t.students[4].cells[0].touched);
+        CHECK_NEAR(t.students[0].cells[0].awarded, 20.0);
+    }
+    {
+        Project t = p;
+        reshapeProject(t, p.questions, {0, 1}, 2); // drops student index 2
+        CHECK(t.students.size() == 2);
+        CHECK(t.students[1].cells[1].fullTick);
+    }
+
+    // 5. Round-trip a reshaped project: schema stays 2, grid stays rectangular.
+    {
+        Question qn; qn.title = "Qx"; qn.maxPoints = 8.0; qn.subCount = 3; qn.split = SplitMode::Equal;
+        normalizeQuestion(qn);
+        std::vector<Question> nq = p.questions; nq.push_back(qn);
+        Project t = p;
+        reshapeProject(t, nq, {0, 1, -1}, 4);
+        std::string js = toJsonString(t);
+        Project r; std::string err;
+        CHECK(projectFromJsonString(js, r, &err));
+        CHECK(r.schemaVersion == 2);
+        CHECK(r.questions.size() == 3);
+        CHECK(r.students.size() == 4);
+        for (const auto& s : r.students) CHECK(s.cells.size() == 3);
+    }
+}
+
 // Reduced BiDi (Bidi.cpp): logical -> visual reordering for Hebrew notes. Hebrew
 // letters are given as codepoints so the test file stays ASCII/source-encoding
 // agnostic. Aleph..Vav = U+05D0..U+05D5.
@@ -1006,6 +1092,7 @@ int main()
     testNoteSuggestionPool();
     testGradingEquality();
     testFirstGradingDiff();
+    testReshapeProject();
     testBidi();
     testBmpFromDib();
 

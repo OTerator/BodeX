@@ -2,6 +2,7 @@
 
 #include "ui/HomeScreen.h"
 #include "ui/NewProjectScreen.h"
+#include "ui/ProjectSettingsScreen.h"
 #include "ui/GradingTable.h"
 #include "ui/platform_dialogs.h"
 
@@ -13,6 +14,9 @@
 
 #include "imgui.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <utility>
@@ -49,6 +53,17 @@ void NewProjectDraft::reset()
     questionCount = 4;
     questions.clear();
     syncQuestions();
+}
+
+void ProjectSettingsDraft::loadFrom(const Project& p)
+{
+    name             = p.name;
+    studentCount     = static_cast<int>(p.students.size());
+    origStudentCount = studentCount;
+    questions        = p.questions;
+    originalIndex.resize(questions.size());
+    for (size_t j = 0; j < questions.size(); ++j)
+        originalIndex[j] = static_cast<int>(j); // each column starts mapped to itself
 }
 
 } // namespace gt
@@ -191,13 +206,15 @@ void App::render()
     renderMenuBar();
 
     switch (screen) {
-        case Screen::Home:       gt::ui::homeScreen(*this);       break;
-        case Screen::NewProject: gt::ui::newProjectScreen(*this); break;
-        case Screen::Grading:    gt::ui::gradingScreen(*this);    break;
+        case Screen::Home:            gt::ui::homeScreen(*this);            break;
+        case Screen::NewProject:      gt::ui::newProjectScreen(*this);      break;
+        case Screen::Grading:         gt::ui::gradingScreen(*this);         break;
+        case Screen::ProjectSettings: gt::ui::projectSettingsScreen(*this); break;
     }
 
     renderShortcutsOverlay();  // F1 / Help legend; drawn over any screen
     renderUnsavedPrompt();
+    renderSettingsConfirm();
     renderRestorePrompt();
 
     // After everything is drawn: checkpoint the frame's grading edit (if any) once
@@ -223,6 +240,9 @@ void App::renderMenuBar()
             doSave();
         if (ImGui::MenuItem("Save As...", nullptr, false, hasProject))
             doSaveAs();
+        ImGui::Separator();
+        if (ImGui::MenuItem("Project Settings...", nullptr, false, hasProject))
+            openProjectSettings();
         ImGui::Separator();
         if (ImGui::MenuItem("Close Project", nullptr, false, hasProject))
             guard(Pending::CloseProject);
@@ -400,6 +420,159 @@ void App::applyLoadedProject(gt::Project&& p, const std::string& path)
     gt::addRecentProject(config, path);
     gt::saveConfig(config);
     statusMsg = "Opened " + path;
+}
+
+// ----------------------------------------------- project settings (§8d) --
+void App::openProjectSettings()
+{
+    if (!hasProject)
+        return;
+    settings.loadFrom(project);
+    statusMsg.clear();
+    screen = Screen::ProjectSettings;
+}
+
+void App::tryApplyProjectSettings()
+{
+    settingsSummary_ = settingsChangeSummary();
+    if (settingsSummary_.empty())
+        applyProjectSettings();       // pure additions / renames -> nothing at risk
+    else
+        openSettingsConfirm_ = true;  // grade-affecting -> confirm (deferred open, §8)
+}
+
+void App::applyProjectSettings()
+{
+    // Reshape the live project to the edited structure, carrying grades per originalIndex.
+    gt::reshapeProject(project, settings.questions, settings.originalIndex, settings.studentCount);
+    project.name = settings.name;
+
+    // A structural change gets the same view-state reset as a project swap: previews /
+    // notes windows index into questions/students by position, and prior undo snapshots
+    // are shaped for the old questions, so both are invalidated.
+    previews.clear();
+    notesWins.clear();
+    editorNoteSub = -1;
+    noteTargetValid = false;
+    editorWasOpen = false;
+    labelsQuestion = -1;
+    activeRow = activeCol = 0;
+    gridEditing = false;
+    gridEditPageActive = false;
+    gridEditScoreDirty = false;
+    gridEditSuppressSpace = false;
+    resetColumnView();
+    resetHistory();     // old snapshots no longer match the grid shape -> discard
+    markDirty();
+    screen = Screen::Grading;
+    statusMsg = "Project settings applied.";
+}
+
+std::vector<std::string> App::settingsChangeSummary()
+{
+    std::vector<std::string> out;
+    const int nStudents = static_cast<int>(project.students.size());
+
+    // 1. Deleted columns (an old index no originalIndex maps to) that carried grades.
+    std::vector<char> kept(project.questions.size(), 0);
+    for (int oi : settings.originalIndex)
+        if (oi >= 0 && oi < static_cast<int>(kept.size()))
+            kept[static_cast<size_t>(oi)] = 1;
+    for (size_t j = 0; j < project.questions.size(); ++j) {
+        if (kept[j]) continue;
+        bool graded = false;
+        for (const auto& s : project.students) {
+            if (j >= s.cells.size()) continue;
+            const gt::Cell& c = s.cells[j];
+            if (c.touched || c.fullTick || gt::cellHasAnyNote(c)) { graded = true; break; }
+        }
+        char buf[192];
+        std::snprintf(buf, sizeof(buf), "Question \"%s\" will be removed%s.",
+                      project.questions[j].title.c_str(),
+                      graded ? " (discards its grades)" : "");
+        out.emplace_back(buf);
+    }
+
+    // 2. Removed students (end-truncation) that carried grades.
+    if (settings.studentCount < nStudents) {
+        bool anyGraded = false;
+        for (int i = settings.studentCount; i < nStudents && !anyGraded; ++i) {
+            const gt::Student& s = project.students[static_cast<size_t>(i)];
+            if (s.noSubmission) { anyGraded = true; break; }
+            for (const auto& c : s.cells)
+                if (c.touched || c.fullTick || gt::cellHasAnyNote(c)) { anyGraded = true; break; }
+        }
+        const int removed = nStudents - settings.studentCount;
+        char buf[160];
+        std::snprintf(buf, sizeof(buf), "%d student%s will be removed%s.",
+                      removed, removed == 1 ? "" : "s",
+                      anyGraded ? " (some carry grades)" : "");
+        out.emplace_back(buf);
+    }
+
+    // 3. Retained columns whose structure change alters an existing cell's score.
+    //    Build the reshape into a temp copy and compare per-cell before/after.
+    gt::Project tmp = project;
+    gt::reshapeProject(tmp, settings.questions, settings.originalIndex, settings.studentCount);
+    for (size_t j = 0; j < settings.originalIndex.size() && j < tmp.questions.size(); ++j) {
+        const int oi = settings.originalIndex[j];
+        if (oi < 0 || oi >= static_cast<int>(project.questions.size()))
+            continue; // a brand-new column has no "before" to change
+        bool changed = false;
+        const int rows = std::min(static_cast<int>(project.students.size()),
+                                  static_cast<int>(tmp.students.size()));
+        for (int i = 0; i < rows && !changed; ++i) {
+            const gt::Student& sb = project.students[static_cast<size_t>(i)];
+            const gt::Student& sa = tmp.students[static_cast<size_t>(i)];
+            const gt::Cell& before = sb.cells[static_cast<size_t>(oi)];
+            const gt::Cell& after  = sa.cells[j];
+            if (!(before == after))
+                changed = true; // reshaping altered the stored cell (e.g. reset Custom marks)
+            else if (std::fabs(gt::cellPoints(sb, project.questions[static_cast<size_t>(oi)], before) -
+                               gt::cellPoints(sa, tmp.questions[j], after)) > 1e-9)
+                changed = true; // same cell, different score (e.g. equalShare shifted)
+        }
+        if (changed) {
+            char buf[192];
+            std::snprintf(buf, sizeof(buf),
+                          "Question \"%s\": some existing scores will be recalculated.",
+                          tmp.questions[j].title.c_str());
+            out.emplace_back(buf);
+        }
+    }
+    return out;
+}
+
+void App::renderSettingsConfirm()
+{
+    // Deferred open so OpenPopup/BeginPopupModal share this call's id stack (the Apply
+    // button lives under the settings window's id stack; opening there would never match).
+    if (openSettingsConfirm_) {
+        ImGui::OpenPopup("Apply Changes?");
+        openSettingsConfirm_ = false;
+    }
+    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("Apply Changes?", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    ImGui::TextUnformatted("These changes affect existing grades:");
+    ImGui::Spacing();
+    for (const auto& line : settingsSummary_)
+        ImGui::BulletText("%s", line.c_str());
+    ImGui::Spacing();
+    ImGui::TextDisabled("Grading undo history will be cleared.");
+    ImGui::Spacing();
+
+    if (ImGui::Button("Apply", ImVec2(110, 0))) {
+        ImGui::CloseCurrentPopup();
+        applyProjectSettings();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(110, 0)))
+        ImGui::CloseCurrentPopup();
+
+    ImGui::EndPopup();
 }
 
 bool App::doSave()

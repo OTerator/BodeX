@@ -1,8 +1,11 @@
 #include "ui/widgets.h"
 
-#include "model/Project.h" // gt::TextDir
+#include "ui/BidiInput.h"  // bidiNoteInput (sub-question labels)
+#include "model/Project.h" // gt::TextDir, Question, normalizeQuestion, equalShare
 #include "model/Bidi.h"
+#include "imgui_stdlib.h"  // ImGui::InputText(std::string&)
 
+#include <cmath>
 #include <cstdio>
 
 namespace gt::ui {
@@ -28,6 +31,85 @@ bool greenTickCheckbox(const char* label, bool* v)
     ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.20f, 0.44f, 0.24f, 1.00f));
     bool changed = ImGui::Checkbox(label, v);
     ImGui::PopStyleColor(3);
+    return changed;
+}
+
+bool questionConfigBlock(gt::Question& q, int index)
+{
+    const ImVec4 kOk(0.35f, 0.85f, 0.40f, 1.0f);
+    const ImVec4 kWarn(0.95f, 0.65f, 0.20f, 1.0f);
+    bool changed = false;
+
+    ImGui::AlignTextToFramePadding();
+    ImGui::Text("Q%d", index + 1);
+
+    ImGui::SameLine(50);
+    ImGui::SetNextItemWidth(150);
+    if (ImGui::InputText("title##t", &q.title)) changed = true;
+
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(110);
+    if (ImGui::InputDouble("points##m", &q.maxPoints, 0.0, 0.0, "%.2f")) {
+        if (q.maxPoints < 0) q.maxPoints = 0;
+        gt::normalizeQuestion(q);
+        changed = true;
+    }
+
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120);
+    if (ImGui::InputInt("sub-Qs##s", &q.subCount)) {
+        if (q.subCount < 1)  q.subCount = 1;
+        if (q.subCount > 50) q.subCount = 50;
+        gt::normalizeQuestion(q);
+        changed = true;
+    }
+
+    ImGui::SameLine();
+    int splitInt = (q.split == gt::SplitMode::Custom) ? 1 : 0;
+    if (ImGui::RadioButton("Equal", &splitInt, 0)) { q.split = gt::SplitMode::Equal;  gt::normalizeQuestion(q); changed = true; }
+    ImGui::SameLine();
+    if (ImGui::RadioButton("Custom", &splitInt, 1)) { q.split = gt::SplitMode::Custom; gt::normalizeQuestion(q); changed = true; }
+
+    if (q.split == gt::SplitMode::Custom) {
+        if (static_cast<int>(q.subPoints.size()) != q.subCount)
+            q.subPoints.resize(static_cast<size_t>(q.subCount), gt::equalShare(q));
+        ImGui::Indent(50);
+        double sum = 0.0;
+        for (int k = 0; k < q.subCount; ++k) {
+            ImGui::PushID(k);
+            ImGui::SetNextItemWidth(70);
+            if (ImGui::InputDouble("##sp", &q.subPoints[static_cast<size_t>(k)], 0.0, 0.0, "%.2f")) changed = true;
+            sum += q.subPoints[static_cast<size_t>(k)];
+            ImGui::PopID();
+            if ((k % 6) != 5 && k != q.subCount - 1)
+                ImGui::SameLine();
+        }
+        const bool matches = std::fabs(sum - q.maxPoints) < 1e-6;
+        ImGui::TextColored(matches ? kOk : kWarn, "sub-points sum = %s / %s",
+                           fmtNum(sum).c_str(), fmtNum(q.maxPoints).c_str());
+        ImGui::Unindent(50);
+    } else {
+        ImGui::Indent(50);
+        ImGui::TextDisabled("each of %d sub-questions = %s pts", q.subCount, fmtNum(gt::equalShare(q)).c_str());
+        ImGui::Unindent(50);
+    }
+
+    if (q.subCount >= 2) {
+        if (static_cast<int>(q.subLabels.size()) != q.subCount)
+            q.subLabels.resize(static_cast<size_t>(q.subCount));
+        ImGui::Indent(50);
+        ImGui::TextDisabled("sub-question labels (optional):");
+        for (int k = 0; k < q.subCount; ++k) {
+            ImGui::PushID(k);
+            gt::TextDir tmp = gt::TextDir::Auto; // labels persist no direction of their own
+            if (bidiNoteInput("##lbl", q.subLabels[static_cast<size_t>(k)], tmp, 110.0f, true)) changed = true;
+            ImGui::PopID();
+            if ((k % 6) != 5 && k != q.subCount - 1)
+                ImGui::SameLine();
+        }
+        ImGui::Unindent(50);
+    }
+
     return changed;
 }
 
