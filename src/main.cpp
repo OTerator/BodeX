@@ -40,10 +40,56 @@ static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 // Message handler implemented in imgui_impl_win32.cpp
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
+// ---- window geometry (driven by the Settings panel via App's request latch) ----
+// Preferences carry a *client* size (what WM_SIZE reports and the swap chain uses),
+// so the helpers convert to/from the outer window rect. g_isFullscreen tracks the
+// borderless state; g_prevPlacement restores the windowed rect on the way back.
+static bool             g_isFullscreen = false;
+static WINDOWPLACEMENT  g_prevPlacement = { sizeof(WINDOWPLACEMENT) };
+
+static void SetClientSize(HWND h, int cw, int ch)
+{
+    RECT r = { 0, 0, cw, ch };
+    const DWORD style   = (DWORD)::GetWindowLongPtrW(h, GWL_STYLE);
+    const DWORD exStyle = (DWORD)::GetWindowLongPtrW(h, GWL_EXSTYLE);
+    ::AdjustWindowRectEx(&r, style, FALSE, exStyle);
+    ::SetWindowPos(h, nullptr, 0, 0, r.right - r.left, r.bottom - r.top,
+                   SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+static void SetFullscreen(HWND h, bool on)
+{
+    if (on == g_isFullscreen)
+        return;
+    const DWORD style = (DWORD)::GetWindowLongPtrW(h, GWL_STYLE);
+    if (on) {
+        MONITORINFO mi = { sizeof(MONITORINFO) };
+        if (::GetWindowPlacement(h, &g_prevPlacement) &&
+            ::GetMonitorInfoW(::MonitorFromWindow(h, MONITOR_DEFAULTTOPRIMARY), &mi)) {
+            ::SetWindowLongPtrW(h, GWL_STYLE, style & ~WS_OVERLAPPEDWINDOW);
+            ::SetWindowPos(h, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
+                           mi.rcMonitor.right - mi.rcMonitor.left,
+                           mi.rcMonitor.bottom - mi.rcMonitor.top,
+                           SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+            g_isFullscreen = true;
+        }
+    } else {
+        ::SetWindowLongPtrW(h, GWL_STYLE, style | WS_OVERLAPPEDWINDOW);
+        ::SetWindowPlacement(h, &g_prevPlacement);
+        ::SetWindowPos(h, nullptr, 0, 0, 0, 0,
+                       SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        g_isFullscreen = false;
+    }
+}
+
 int main(int, char**)
 {
     // High-DPI awareness before creating the window (defined in the win32 backend).
     ImGui_ImplWin32_EnableDpiAwareness();
+
+    // Boot preferences (window size / fullscreen) so the window opens at the last
+    // saved geometry. App loads the config again in its ctor; the JSON is tiny.
+    const gt::AppConfig bootCfg = gt::loadConfig();
 
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L,
                        GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr,
@@ -67,6 +113,12 @@ int main(int, char**)
         return 1;
     }
 
+    // Apply the saved window geometry before showing (fullscreen, or a client size).
+    if (bootCfg.prefs.fullscreen)
+        SetFullscreen(hwnd, true);
+    else
+        SetClientSize(hwnd, bootCfg.prefs.winW, bootCfg.prefs.winH);
+
     ::ShowWindow(hwnd, SW_SHOWDEFAULT);
     ::UpdateWindow(hwnd);
 
@@ -76,21 +128,14 @@ int main(int, char**)
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr; // keep the app self-contained; no imgui.ini on disk
 
-    ImGui::StyleColorsDark();
-
     ImGui_ImplWin32_Init(hwnd);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
     gt::ui::imageStoreInit(g_pd3dDevice, g_pd3dDeviceContext); // for question images
 
-    // Scale the whole UI (sizes + fonts) to the monitor DPI so it renders crisp
-    // and correctly sized on high-DPI displays (process is DPI-aware via manifest).
-    {
-        const float dpiScale = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
-        ImGuiStyle& style = ImGui::GetStyle();
-        if (dpiScale > 1.0f)
-            style.ScaleAllSizes(dpiScale);
-        style.FontScaleMain = dpiScale; // 1.92 global font scale
-    }
+    // Monitor DPI factor; the theme + effective scale are applied by the app once it
+    // exists (App::applyDisplaySettings rebuilds the style from config.prefs so the
+    // Settings panel can re-theme / re-scale live without compounding ScaleAllSizes).
+    const float dpiScale = ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
 
     // Fonts: keep ProggyClean (ASCII-only) as the main UI font, and load a scalable
     // Hebrew-capable system font as a *separate* font used only for cell-note text
@@ -109,6 +154,8 @@ int main(int, char**)
     }
 
     App app;
+    app.setBaseDpi(dpiScale);
+    app.applyDisplaySettings(); // theme + effective scale from the saved preferences
 
     const ImVec4 clear_color = ImVec4(0.09f, 0.10f, 0.12f, 1.00f);
 
@@ -161,6 +208,16 @@ int main(int, char**)
             app.flushAutosave();
         }
 
+        // Apply a pending resolution/fullscreen change from the Settings panel.
+        {
+            int rw = 0, rh = 0; bool rfs = false;
+            if (app.consumeWindowRequest(rw, rh, rfs)) {
+                SetFullscreen(hwnd, rfs);
+                if (!rfs)
+                    SetClientSize(hwnd, rw, rh);
+            }
+        }
+
         ImGui::Render();
         const float clear[4] = { clear_color.x, clear_color.y, clear_color.z, clear_color.w };
         g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
@@ -174,6 +231,14 @@ int main(int, char**)
             done = true;
     }
 
+    // Capture the final (manually-resized) client size so the next launch restores
+    // it — done once at exit, not per-frame, so it can't fight the custom-size input.
+    if (!g_isFullscreen) {
+        RECT rc;
+        if (::GetClientRect(hwnd, &rc))
+            app.setLiveWindowSize(rc.right - rc.left, rc.bottom - rc.top);
+    }
+    gt::saveConfig(app.config);     // persist the final window size / preferences
     gt::ui::imageStoreReleaseAll(); // free image textures while the device is alive
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplWin32_Shutdown();

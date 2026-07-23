@@ -412,7 +412,7 @@ static void testConfigRoundTrip()
     AppConfig none;
     none.recentProjects = { "x.json" };
     const std::string js = configToJsonString(none);
-    CHECK(js.find("autosave") == std::string::npos);
+    CHECK(js.find("\"autosave\":") == std::string::npos); // no record key (cf. prefs' "autosaveSec")
     AppConfig r2;
     CHECK(configFromJsonString(js, r2));
     CHECK(r2.autosave.empty());
@@ -423,6 +423,39 @@ static void testConfigRoundTrip()
     CHECK(configFromJsonString("{ \"recentProjects\": [\"only.json\"] }", r3));
     CHECK(r3.autosave.empty());
     CHECK(r3.recentProjects.size() == 1);
+    // ...and no "prefs" key falls back to the defaults, not garbage.
+    CHECK(r3.prefs.theme == 0);
+    CHECK(r3.prefs.stepSize == 1.0);
+    CHECK(r3.prefs.winW == 1280 && r3.prefs.winH == 820);
+
+    // Settings preferences round-trip verbatim through JSON.
+    AppConfig pc;
+    pc.prefs.theme       = 1;
+    pc.prefs.stepSize    = 0.5;
+    pc.prefs.uiScale     = 1.25f;
+    pc.prefs.autosaveSec = 15.0;
+    pc.prefs.winW        = 1600;
+    pc.prefs.winH        = 900;
+    pc.prefs.fullscreen  = true;
+    pc.prefs.dpiOverride = 2.0f;
+    AppConfig pr;
+    CHECK(configFromJsonString(configToJsonString(pc), pr));
+    CHECK(pr.prefs.theme == 1);
+    CHECK(pr.prefs.stepSize == 0.5);
+    CHECK(pr.prefs.uiScale == 1.25f);
+    CHECK(pr.prefs.autosaveSec == 15.0);
+    CHECK(pr.prefs.winW == 1600 && pr.prefs.winH == 900);
+    CHECK(pr.prefs.fullscreen == true);
+    CHECK(pr.prefs.dpiOverride == 2.0f);
+
+    // Out-of-range prefs are clamped to sane ranges on read.
+    AppConfig clamp;
+    CHECK(configFromJsonString(
+        "{ \"prefs\": { \"theme\": 9, \"stepSize\": 0.0, \"uiScale\": 99.0, \"winW\": 10 } }", clamp));
+    CHECK(clamp.prefs.theme == 2);        // clamped to [0,2]
+    CHECK(clamp.prefs.stepSize >= 0.05);  // floored
+    CHECK(clamp.prefs.uiScale <= 3.0f);   // capped
+    CHECK(clamp.prefs.winW >= 640);       // floored
 
     // Corrupt JSON -> false, and the out-config is reset to defaults.
     AppConfig r4;

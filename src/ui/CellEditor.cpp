@@ -93,9 +93,10 @@ void cellEditorPopup(App& app)
     // cell assumes full marks, later presses deduct — see gt::stepAwarded), plus a
     // field for an exact value. The buttons act even on a full tick (that is the
     // "assume full then dock" path), so they sit outside the disabled block.
-    if (ImGui::Button("-##award")) { gt::stepAwarded(q, c, -1.0); app.markDirty(); }
+    const double step = app.config.prefs.stepSize; // configurable +/- step (Settings)
+    if (ImGui::Button("-##award")) { gt::stepAwarded(q, c, -step); app.markDirty(); }
     ImGui::SameLine();
-    if (ImGui::Button("+##award")) { gt::stepAwarded(q, c, +1.0); app.markDirty(); }
+    if (ImGui::Button("+##award")) { gt::stepAwarded(q, c, +step); app.markDirty(); }
     ImGui::SameLine();
     ImGui::BeginDisabled(c.fullTick);
     double awarded = c.awarded;

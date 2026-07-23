@@ -81,6 +81,7 @@ mingw32-make clean    # remove build/
 - `BODEX_DEMO=1` → launch straight into a populated sample grid.
 - `BODEX_DEMO=2` → same, and open the cell editor on the first cell.
 - `BODEX_DEMO=3` → jump to the New Project screen.
+- `BODEX_DEMO=4` → same grid, with the Settings panel open (§8e).
 Handled in `App::App()` (`src/app/App.cpp`, `buildDemoProject()`). The demo cell's
 note is a Hebrew string, to exercise the BiDi note field (§9c).
 
@@ -90,8 +91,13 @@ lets scripted keystrokes land in the note — default UX still focuses grading).
 `BODEX_OPEN=<path>` opens a specific project on launch (used for "open with" and
 for GUI testing without clicking through the launcher).
 
-`BODEX_AUTOSAVE_SEC=<seconds>` overrides the 30 s autosave interval (§8c) — set it
-low (e.g. `2`) to exercise autosave / crash-recovery quickly during GUI testing.
+`BODEX_AUTOSAVE_SEC=<seconds>` overrides the autosave interval (the saved
+`prefs.autosaveSec`, default 30 s — §8c/§8e) — set it low (e.g. `2`) to exercise
+autosave / crash-recovery quickly during GUI testing.
+
+The window opens at the saved `prefs.winW`/`winH` (or fullscreen) and the theme/scale
+come from `prefs` (§8e); a fresh machine with no `config.json` uses the defaults
+(1280×820, Dark, monitor DPI).
 
 **Desktop shortcut:** `tools/create_shortcut.ps1` creates/refreshes
 `Desktop\BodeX.lnk` (icon from `resources/BodeX.ico`, target `build/BodeX.exe`,
@@ -300,8 +306,10 @@ Per-cell effective points, **highest precedence first**:
   5.5/7.5 when one of four equal sub-qs is skipped), unlocking adds them back, then
   clamps `awarded` into `[0, effectiveMax]`. Either way `fullTick` clears once a
   sub-question is skipped and the cell is marked `touched`. GUI-free/tested.
-- `stepAwarded(q, c, delta)` (Scoring.*) steps `awarded` by `delta` (±1) in **one
-  press**. Baseline: a green/full cell (`fullTick`) → the full `maxPoints`; a blank
+- `stepAwarded(q, c, delta)` (Scoring.*) steps `awarded` by `delta` in **one
+  press**. `delta` is the signed **`prefs.stepSize`** (default 1.0, configurable in the
+  Settings panel §8e) — the grid `+`/`-` keys and the cell editor's `-`/`+` buttons both
+  pass `±stepSize`. Baseline: a green/full cell (`fullTick`) → the full `maxPoints`; a blank
   cell (`!touched`) → `effectiveMax` for `-` but `0` for `+` (so `-` docks from full,
   `+` builds up from 0); a graded cell (incl. a typed full) → its current `awarded`.
   Then `awarded = clamp(baseline + delta, 0, effectiveMax)`, `fullTick` cleared,
@@ -361,8 +369,9 @@ Per-cell effective points, **highest precedence first**:
   migration branch, still schema 2. `ensureShape` prunes any out-of-range/empty
   entries a hand-edited or foreign file might contain (same defensive pattern as the
   image sub-question tags).
-- Config: `%APPDATA%\BodeX\config.json` holds the recent-projects list **and the
-  pending-autosave record** (`AutosaveRecord`, §8c); `%APPDATA%\BodeX\projects\` is
+- Config: `%APPDATA%\BodeX\config.json` holds the recent-projects list, the
+  pending-autosave record (`AutosaveRecord`, §8c), **and the Settings preferences**
+  (`Preferences` under `"prefs"`, §8e); `%APPDATA%\BodeX\projects\` is
   the suggested (not enforced) save dir and `%APPDATA%\BodeX\autosave\` holds the
   crash-recovery files. `AppConfig` resolves these via
   `SHGetFolderPathW(CSIDL_APPDATA)` and creates them on demand (`appDataDir`,
@@ -541,13 +550,15 @@ sets `demoMode_` and is never autosaved (so it can't fabricate a recovery prompt
 
 ## 8d. Project Settings (post-creation structure editing)
 
-**File → Project Settings…** opens a full screen (`Screen::ProjectSettings`,
-`ui/ProjectSettingsScreen.cpp`) to edit an existing project's structure — name,
-student count, and per-question setup — **after** creation, preserving grades. Before
-this, question structure was fixed once the grid existed (only images / sub-labels /
-note-suggestions were mutable). Menu item is gated on `hasProject`.
+The **Project** section of the Settings panel (§8e) edits an existing project's
+structure — name, student count, and per-question setup — **after** creation,
+preserving grades. It renders `ui/ProjectSettingsScreen.cpp`'s
+`projectSettingsSection(App&)` (no window of its own) inside the Settings content
+pane. Before this, question structure was fixed once the grid existed (only images /
+sub-labels / note-suggestions were mutable). The section is gated on `hasProject`.
 
-- **Working copy.** `App::openProjectSettings` snapshots the live structure into
+- **Working copy.** `App::openProjectSettings` (an alias for
+  `openSettings(SettingsSection::Project)`) snapshots the live structure into
   `App::settings` (a `gt::ProjectSettingsDraft`: `name`, `studentCount`,
   `origStudentCount`, a copy of `questions`, and a parallel `originalIndex` — each
   column's source index, `-1` = added on this screen). The screen edits only this copy,
@@ -582,6 +593,51 @@ note-suggestions were mutable). Menu item is gated on `hasProject`.
 
 - No schema change — only existing fields are mutated (`schemaVersion` stays 2). Tests:
   `testReshapeProject` in `tests/test_core.cpp`.
+
+---
+
+## 8e. Settings panel (top bar)
+
+A **Settings** top-bar menu opens a full-screen, two-pane panel (`Screen::Settings`,
+`ui/SettingsScreen.cpp`): a left category nav and a right content pane. `App::openSettings(section)`
+enters it at a section; the menu offers `Settings…`/`General`/`Keybinds`/`Project…`
+(the last gated on `hasProject`), and **File → Project Settings…** is kept as an alias
+into the Project section. **Close** returns to `hasProject ? Grading : Home`.
+
+Sections (`App::SettingsSection`):
+- **General** — the persisted preferences (below). Each control applies **live** and
+  `saveConfig`s on commit; the panel also saves on Close.
+- **Keybinds** — a **read-only** shortcut reference table (a structured mirror of the
+  F1 overlay text `gridShortcutsText`; rebinding is not yet implemented).
+- **Project** — the §8d structure editor, embedded (its own Apply/Cancel footer).
+
+**Persistence — `AppConfig::prefs` (`gt::Preferences`, model/AppConfig.*).** Saved in
+`config.json` under `"prefs"`; `configFromJsonString` is tolerant of a missing/partial
+block (each key falls back to its default) and **clamps** every value to a sane range,
+so a hand-edited/old config can't wedge the UI. Fields: `theme` (0 Dark / 1 Light /
+2 Classic), `stepSize` (the `+`/`-` point step, §6), `uiScale`, `autosaveSec`,
+`winW`/`winH`, `fullscreen`, `dpiOverride` (0 = auto). Round-trip + clamp tests in
+`testConfigRoundTrip`.
+
+**Applying prefs.** `App::applyDisplaySettings()` **rebuilds** the ImGui style from
+scratch each call — `StyleColors{Dark,Light,Classic}` per `theme`, then
+`ScaleAllSizes(eff)` + `FontScaleMain = eff` where `eff = (dpiOverride>0 ? dpiOverride
+: baseDpi_) * uiScale` — so repeated theme/scale changes never compound `ScaleAllSizes`.
+`main.cpp` hands the monitor DPI in via `setBaseDpi` and calls it once at startup, then
+the panel calls it on each display-pref change. *Interaction:* grid **cell** text is
+driven by `gridZoom` (`FontSizeBase * gridZoom`, which deliberately bypasses
+`FontScaleMain`, §9), so `uiScale` scales chrome/menus/dialogs but not grid cells.
+`applyPrefsRuntime()` pushes `autosaveSec` into `autosaveInterval_` (the
+`BODEX_AUTOSAVE_SEC` env override still wins).
+
+**Window geometry (the platform bridge).** The GUI-free `App` has no `HWND`, so
+resolution/fullscreen changes go through a one-shot latch: the Settings screen calls
+`requestWindowChange()`, and `main.cpp` — after `app.render()`, mirroring the
+`g_closeRequested`/`g_appDeactivated` pattern — reads `consumeWindowRequest(w,h,fs)` and
+applies it (`SetClientSize` / borderless-fullscreen `SetFullscreen`). `winW`/`winH` are
+a **client** size (matches `WM_SIZE`), applied at launch from a boot `loadConfig` before
+`ShowWindow`, and the live size is fed back via `setLiveWindowSize` each frame and saved
+on clean exit.
 
 ---
 
@@ -1066,7 +1122,7 @@ Reset in `App::resetColumnView` (so every new/open/close/restore starts in the g
 
 ## 12. Verifying changes (do this, don't just build)
 
-- **Core logic:** `mingw32-make test` (332 checks: scoring rules incl. sub-question
+- **Core logic:** `mingw32-make test` (385 checks: scoring rules incl. sub-question
   sync, one-press `stepAwarded`, and `isFullMarks`, JSON string + on-disk round-trip,
   the per-question `folded`/`viewWidth` view state (§9), the per-sub-question notes
   fields and helpers (§9c: `setSubNote`/`findSubNote`/`subHeader`/
@@ -1081,7 +1137,7 @@ Reset in `App::resetColumnView` (so every new/open/close/restore starts in the g
   process can't reliably foreground the window). The **capturing** PowerShell
   process must call `SetProcessDpiAwarenessContext((IntPtr)-4)` before
   `GetWindowRect`/`PrintWindow`, or the 150%-scaled window comes back virtualized
-  and blurry. Recipe: `Start-Process` the exe with `BODEX_DEMO=1/2/3`, sleep ~2s,
+  and blurry. Recipe: `Start-Process` the exe with `BODEX_DEMO=1/2/3/4`, sleep ~2s,
   get `MainWindowHandle`, size a `System.Drawing.Bitmap` to the window rect,
   `PrintWindow(h, hdc, 2)`, save PNG. To drive clicks/drags, `SetWindowPos` the
   window topmost at a known origin, use the alt-key + `SetForegroundWindow` trick,

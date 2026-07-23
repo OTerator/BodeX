@@ -623,10 +623,11 @@ void handleGridKeyboard(App& app)
     // main-row keys both emit these chars, so reading the char queue covers both;
     // consume it so the char can't also seed an inline edit below.
     if (!s.noSubmission && !locked && !io.InputQueueCharacters.empty()) {
+        const double step = app.config.prefs.stepSize; // configurable +/- step (Settings)
         bool stepped = false;
         for (ImWchar ch : io.InputQueueCharacters) {
-            if (ch == '-')      { gt::stepAwarded(q, cell, -1.0); stepped = true; }
-            else if (ch == '+') { gt::stepAwarded(q, cell, +1.0); stepped = true; }
+            if (ch == '-')      { gt::stepAwarded(q, cell, -step); stepped = true; }
+            else if (ch == '+') { gt::stepAwarded(q, cell, +step); stepped = true; }
         }
         if (stepped) {
             app.markDirty();

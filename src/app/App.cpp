@@ -2,7 +2,7 @@
 
 #include "ui/HomeScreen.h"
 #include "ui/NewProjectScreen.h"
-#include "ui/ProjectSettingsScreen.h"
+#include "ui/SettingsScreen.h"
 #include "ui/GradingTable.h"
 #include "ui/platform_dialogs.h"
 
@@ -114,8 +114,10 @@ App::App()
     config = gt::loadConfig();
     draft.reset();
 
-    // Autosave cadence (seconds). BODEX_AUTOSAVE_SEC overrides the default so the
-    // crash-recovery flow can be exercised quickly during testing.
+    // Autosave cadence (seconds): the saved preference, then BODEX_AUTOSAVE_SEC as an
+    // override so the crash-recovery flow can be exercised quickly during testing.
+    if (config.prefs.autosaveSec > 0.0)
+        autosaveInterval_ = config.prefs.autosaveSec;
     if (const char* iv = std::getenv("BODEX_AUTOSAVE_SEC"); iv && *iv) {
         const double v = std::atof(iv);
         if (v > 0.0)
@@ -143,6 +145,10 @@ App::App()
                 editorStudent = 0;
                 editorQuestion = 0;
                 requestOpenCellEditor = true;
+            }
+            if (*d == '4') {            // BODEX_DEMO=4 opens the Settings panel
+                settingsSection = SettingsSection::General;
+                screen = Screen::Settings;
             }
             statusMsg = "Demo project (BODEX_DEMO) - not saved to disk.";
         }
@@ -206,10 +212,10 @@ void App::render()
     renderMenuBar();
 
     switch (screen) {
-        case Screen::Home:            gt::ui::homeScreen(*this);            break;
-        case Screen::NewProject:      gt::ui::newProjectScreen(*this);      break;
-        case Screen::Grading:         gt::ui::gradingScreen(*this);         break;
-        case Screen::ProjectSettings: gt::ui::projectSettingsScreen(*this); break;
+        case Screen::Home:       gt::ui::homeScreen(*this);       break;
+        case Screen::NewProject: gt::ui::newProjectScreen(*this); break;
+        case Screen::Grading:    gt::ui::gradingScreen(*this);    break;
+        case Screen::Settings:   gt::ui::settingsScreen(*this);   break;
     }
 
     renderShortcutsOverlay();  // F1 / Help legend; drawn over any screen
@@ -242,7 +248,7 @@ void App::renderMenuBar()
             doSaveAs();
         ImGui::Separator();
         if (ImGui::MenuItem("Project Settings...", nullptr, false, hasProject))
-            openProjectSettings();
+            openSettings(SettingsSection::Project);
         ImGui::Separator();
         if (ImGui::MenuItem("Close Project", nullptr, false, hasProject))
             guard(Pending::CloseProject);
@@ -256,6 +262,19 @@ void App::renderMenuBar()
             undo();
         if (ImGui::MenuItem("Redo", "Ctrl+Y", false, canRedo()))
             redo();
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Settings")) {
+        if (ImGui::MenuItem("Settings...", nullptr, screen == Screen::Settings))
+            openSettings(SettingsSection::General);
+        ImGui::Separator();
+        if (ImGui::MenuItem("General"))
+            openSettings(SettingsSection::General);
+        if (ImGui::MenuItem("Keybinds"))
+            openSettings(SettingsSection::Keybinds);
+        if (ImGui::MenuItem("Project Settings...", nullptr, false, hasProject))
+            openSettings(SettingsSection::Project);
         ImGui::EndMenu();
     }
 
@@ -422,14 +441,79 @@ void App::applyLoadedProject(gt::Project&& p, const std::string& path)
     statusMsg = "Opened " + path;
 }
 
+// ------------------------------------------------------ settings panel --
+void App::openSettings(SettingsSection s)
+{
+    if (s == SettingsSection::Project) {
+        if (!hasProject)
+            return;                 // no project -> Project section is unavailable
+        settings.loadFrom(project); // snapshot the live structure into the working copy
+        statusMsg.clear();
+    }
+    settingsSection = s;
+    screen = Screen::Settings;
+}
+
+// Rebuild the ImGui style from scratch (theme colours + sizes) then scale it once,
+// so repeated calls never compound ScaleAllSizes. Called at launch and whenever a
+// display pref (theme / UI scale / DPI override) is committed in the Settings panel.
+void App::applyDisplaySettings()
+{
+    const gt::Preferences& p = config.prefs;
+
+    ImGui::StyleColorsDark(); // reset to defaults first (also restores default sizes)
+    if (p.theme == 1)      ImGui::StyleColorsLight();
+    else if (p.theme == 2) ImGui::StyleColorsClassic();
+
+    const float dpi = (p.dpiOverride > 0.0f) ? p.dpiOverride : baseDpi_;
+    const float eff = dpi * p.uiScale;
+
+    ImGuiStyle& style = ImGui::GetStyle();
+    if (eff != 1.0f)
+        style.ScaleAllSizes(eff);
+    style.FontScaleMain = eff; // global font scale (grid cells use FontSizeBase*gridZoom)
+}
+
+// Push non-display prefs that live outside the ImGui style. The autosave interval
+// mirrors config.prefs.autosaveSec, but the BODEX_AUTOSAVE_SEC env override (set in
+// the ctor) still wins if present.
+void App::applyPrefsRuntime()
+{
+    if (const char* iv = std::getenv("BODEX_AUTOSAVE_SEC"); iv && *iv && std::atof(iv) > 0.0)
+        return; // env override is authoritative
+    if (config.prefs.autosaveSec > 0.0)
+        autosaveInterval_ = config.prefs.autosaveSec;
+}
+
+void App::requestWindowChange() { windowRequest_ = true; }
+
+bool App::consumeWindowRequest(int& w, int& h, bool& fullscreen)
+{
+    if (!windowRequest_)
+        return false;
+    windowRequest_ = false;
+    w          = config.prefs.winW;
+    h          = config.prefs.winH;
+    fullscreen = config.prefs.fullscreen;
+    return true;
+}
+
+void App::setLiveWindowSize(int w, int h)
+{
+    // Persist the actual window size (unless fullscreen, whose rect is the monitor)
+    // so the next launch restores it. Cheap; only writes when it actually changed.
+    if (config.prefs.fullscreen)
+        return;
+    if (w >= 640 && h >= 480 && (w != config.prefs.winW || h != config.prefs.winH)) {
+        config.prefs.winW = w;
+        config.prefs.winH = h;
+    }
+}
+
 // ----------------------------------------------- project settings (§8d) --
 void App::openProjectSettings()
 {
-    if (!hasProject)
-        return;
-    settings.loadFrom(project);
-    statusMsg.clear();
-    screen = Screen::ProjectSettings;
+    openSettings(SettingsSection::Project);   // Project is now a Settings-panel section
 }
 
 void App::tryApplyProjectSettings()

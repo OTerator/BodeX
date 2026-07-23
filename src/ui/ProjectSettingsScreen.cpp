@@ -14,17 +14,11 @@ namespace {
 const ImVec4 kOk(0.35f, 0.85f, 0.40f, 1.0f);
 } // namespace
 
-void projectSettingsScreen(App& app)
+void projectSettingsSection(App& app)
 {
     gt::ProjectSettingsDraft& s = app.settings;
 
-    const ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(vp->WorkPos);
-    ImGui::SetNextWindowSize(vp->WorkSize);
-    ImGui::Begin("Project Settings", nullptr,
-                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
-
-    bigTitle("Project Settings", 24.0f);
+    ImGui::SeparatorText("Project structure");
     ImGui::TextDisabled("Edit the project structure. Existing grades are kept where a question or student is kept;");
     ImGui::TextDisabled("changes that would alter or discard grades are confirmed before they apply.");
     ImGui::Dummy(ImVec2(0, 10));
@@ -115,8 +109,6 @@ void projectSettingsScreen(App& app)
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(120, 36)))
         app.screen = App::Screen::Grading; // discard the working copy, no side effects
-
-    ImGui::End();
 }
 
 } // namespace gt::ui

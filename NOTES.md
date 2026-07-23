@@ -73,9 +73,10 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
     keys (`App::showShortcuts`), for discoverability. Now also reachable from
     **Help → "Keyboard Shortcuts" (F1)** (a live checkbox) and handled at app level
     (`App::renderShortcutsOverlay`), so it works on every screen. spec.md §9.
-  - *Future:* a **configurable step size** for `+`/`-` (e.g. 0.5) — belongs in the
-    settings panel below. A **quick inline note (`c`)** and **keyboard range-full**
-    (Shift+arrows to select, then `f`) are natural next keyboard wins.
+  - ~~*Future:* a **configurable step size** for `+`/`-` (e.g. 0.5)~~ — **done** in the
+    Settings panel (`prefs.stepSize`, see "Settings menu" below). A **quick inline note
+    (`c`)** and **keyboard range-full** (Shift+arrows to select, then `f`) are natural
+    next keyboard wins.
 - ~~**Tick sub-questions to auto-compute the score**~~ — **done** (v2 + sync): cells
   default to all-answered and skipped sub-questions **lock out** their points (equal
   split by count; custom split by per-sub-question ticks, deducting each part's
@@ -183,11 +184,18 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
     double-click select in visual order (currently ImGui's logical best-effort).
 
 **Settings & display**
-- **Settings menu** — promote the scattered settings notes into one first-class
-  screen/dialog: font size / theme, the **`+`/`-` step size** (e.g. 0.5 vs 1),
-  per-question rubric notes at config time, and the **notes font / default text
-  direction** (see the Hebrew/BiDi notes work). A top-bar entry that opens a
-  persistent config (extend `AppConfig`).
+- ~~**Settings menu**~~ — **done:** a top-bar **Settings** menu opens a full-screen,
+  two-pane panel (`Screen::Settings`, `ui/SettingsScreen.cpp`, spec.md §8e) with left-nav
+  sections. **General** persists `AppConfig::prefs` (`gt::Preferences`): **theme**
+  (Dark/Light/Classic, live via `App::applyDisplaySettings` — rebuilds the style so
+  `ScaleAllSizes` never compounds), **UI scale**, the **`+`/`-` step size**, **autosave
+  interval**, **clear recents**, and **resolution** — window-size presets + custom W×H,
+  borderless **fullscreen**, and a **DPI/scale override** (applied to the Win32 window
+  via a one-shot request latch `main.cpp` consumes after render). **Keybinds** is a
+  read-only shortcut table; **Project** embeds the §8d structure editor. `BODEX_DEMO=4`
+  opens it. *Still open:* actually **rebindable** keys (Keybinds is reference-only for
+  now); per-question rubric notes at config time; a **notes font / default text
+  direction** control (the BiDi work below).
 - ~~**Ctrl+scroll to zoom the grid**~~ — **done:** hold Ctrl and mouse-wheel over the
   grid to scale it (row height, column widths, cell font) via a per-view `App::gridZoom`
   (0.5–2.5×), independent of the monitor-DPI factor. The table wraps in
@@ -197,13 +205,15 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 
 **Smaller polish**
 - Search / jump to a student ID.
+- **Rebindable keybinds** — the Settings → Keybinds section is a read-only reference;
+  make the grid action keys actually remappable (an action→key map in `prefs`,
+  conflict detection, rewiring the `GradingTable` handler).
 - ~~Per-question column **fold** (show/hide)~~ — **done:** columns fold to a narrow,
   interaction-**locked** strip that still shows a compact score, one at a time or a
   Ctrl/Shift-selected set, persisted per-question. Plus **size-to-fit** (per column /
   all) that actually measures cell content. Column **reorder** is still parked. See
   spec.md §9.
 - Compact-cell eliding for very long `lastPage` values (middle-elide / tooltip).
-- Settings screen — see **Settings & display → Settings menu** above.
 - CSV/Excel *import* of a roster.
 
 ## Deferred: dock/pin a preview next to the Total column

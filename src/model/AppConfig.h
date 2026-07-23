@@ -21,9 +21,24 @@ struct AutosaveRecord {
     bool empty() const { return file.empty(); }
 };
 
+// Persistent user preferences (the Settings panel). All app-wide, saved in
+// config.json under "prefs". Tolerant of missing keys (each falls back to the
+// default below), so old configs load fine and new keys are additive.
+struct Preferences {
+    int    theme       = 0;      // 0 Dark, 1 Light, 2 Classic (ImGui::StyleColors*)
+    double stepSize    = 1.0;    // +/- point step (gt::stepAwarded delta)
+    float  uiScale     = 1.0f;   // user font/UI multiplier, on top of monitor DPI
+    double autosaveSec = 30.0;   // autosave interval (BODEX_AUTOSAVE_SEC still wins)
+    int    winW        = 1280;   // window size (preset or custom), applied at launch
+    int    winH        = 820;
+    bool   fullscreen  = false;  // borderless fullscreen vs normal window
+    float  dpiOverride = 0.0f;   // 0 = auto (monitor DPI), else an explicit factor
+};
+
 struct AppConfig {
     std::vector<std::string> recentProjects; // most-recent first, UTF-8 paths
     AutosaveRecord           autosave;       // pending crash-recovery autosave (empty = none)
+    Preferences              prefs;          // Settings-panel preferences
 };
 
 // Directory helpers. Each creates the directory if it does not exist and

@@ -78,7 +78,11 @@ public:
     void render();                       // draw the whole UI for this frame
     bool wantsQuit() const { return quit_; }
 
-    enum class Screen { Home, NewProject, Grading, ProjectSettings };
+    enum class Screen { Home, NewProject, Grading, Settings };
+
+    // Left-nav sections of the Settings panel. Project is the post-creation
+    // structure editor (embedded here); it is disabled when no project is open.
+    enum class SettingsSection { General, Keybinds, Project };
 
     // ---- state read/written by ui/* screen functions ----
     Screen              screen = Screen::Home;
@@ -89,6 +93,7 @@ public:
     gt::AppConfig       config;
     gt::NewProjectDraft draft;
     gt::ProjectSettingsDraft settings;   // working copy for the Project Settings screen
+    SettingsSection     settingsSection = SettingsSection::General; // active Settings tab
     std::string         statusMsg;       // transient message shown in the status bar
 
     // Cell editor popup target (-1 = none). requestOpenCellEditor is set the
@@ -187,6 +192,18 @@ public:
     void closeProject();                             // guarded return to Home
     void requestQuit();                              // guarded quit
 
+    // ---- settings panel (top-bar "Settings"; see SettingsScreen.cpp) ----
+    void openSettings(SettingsSection s);   // enter the Settings screen at a section
+    void applyDisplaySettings();            // rebuild ImGui theme + scale from config.prefs
+    void setBaseDpi(float dpi) { baseDpi_ = dpi; } // monitor DPI, handed in by main.cpp
+    void applyPrefsRuntime();               // push non-display prefs (autosave interval) live
+    // One-shot window-geometry latch read by the Win32 host after render(). Returns
+    // true (once) when a resolution/fullscreen change is pending; main.cpp applies it
+    // to the HWND. Also reports the desired size so it can be applied at launch.
+    bool consumeWindowRequest(int& w, int& h, bool& fullscreen);
+    void requestWindowChange();             // arm the latch from the Settings screen
+    void setLiveWindowSize(int w, int h);   // host reports the current window size (persist)
+
     // ---- project settings (post-creation structure editing; see App.cpp §8d) ----
     void openProjectSettings();     // snapshot structure into `settings` -> settings screen
     void tryApplyProjectSettings(); // apply now if grades are safe, else raise the confirm modal
@@ -254,6 +271,12 @@ private:
     void renderSettingsConfirm();    // "Apply Changes?" modal (deferred-open, §8 id-stack)
     bool openSettingsConfirm_ = false;        // deferred OpenPopup latch (mirrors openGuardPopup_)
     std::vector<std::string> settingsSummary_; // effects shown in the confirm modal
+
+    // Display + window prefs. baseDpi_ is the monitor DPI factor (from main.cpp);
+    // applyDisplaySettings rebuilds the style from scratch each call so ScaleAllSizes
+    // never compounds. windowRequest_ is the geometry latch main.cpp consumes.
+    float baseDpi_       = 1.0f;
+    bool  windowRequest_ = false;
 
     bool quit_ = false;
 };

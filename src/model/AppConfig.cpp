@@ -126,6 +126,17 @@ std::string configToJsonString(const AppConfig& cfg)
             {"savedIso",    cfg.autosave.savedIso},
         };
     }
+    const Preferences& p = cfg.prefs;
+    root["prefs"] = {
+        {"theme",       p.theme},
+        {"stepSize",    p.stepSize},
+        {"uiScale",     p.uiScale},
+        {"autosaveSec", p.autosaveSec},
+        {"winW",        p.winW},
+        {"winH",        p.winH},
+        {"fullscreen",  p.fullscreen},
+        {"dpiOverride", p.dpiOverride},
+    };
     return root.dump(2);
 }
 
@@ -150,6 +161,34 @@ bool configFromJsonString(const std::string& text, AppConfig& out)
             out.autosave.projectPath = str("projectPath");
             out.autosave.name        = str("name");
             out.autosave.savedIso    = str("savedIso");
+        }
+        if (root.contains("prefs") && root.at("prefs").is_object()) {
+            const json& j = root.at("prefs");
+            Preferences& p = out.prefs;
+            // Each key is optional; a missing/wrong-typed key keeps the default.
+            auto num = [&](const char* k, auto fallback) {
+                return (j.contains(k) && j.at(k).is_number())
+                           ? j.at(k).get<decltype(fallback)>() : fallback;
+            };
+            p.theme       = num("theme", p.theme);
+            p.stepSize    = num("stepSize", p.stepSize);
+            p.uiScale     = num("uiScale", p.uiScale);
+            p.autosaveSec = num("autosaveSec", p.autosaveSec);
+            p.winW        = num("winW", p.winW);
+            p.winH        = num("winH", p.winH);
+            if (j.contains("fullscreen") && j.at("fullscreen").is_boolean())
+                p.fullscreen = j.at("fullscreen").get<bool>();
+            p.dpiOverride = num("dpiOverride", p.dpiOverride);
+
+            // Clamp to sane ranges so a hand-edited/corrupt config can't wedge the UI.
+            p.theme       = std::clamp(p.theme, 0, 2);
+            p.stepSize    = std::clamp(p.stepSize, 0.05, 100.0);
+            p.uiScale     = std::clamp(p.uiScale, 0.5f, 3.0f);
+            p.autosaveSec = std::clamp(p.autosaveSec, 2.0, 3600.0);
+            p.winW        = std::clamp(p.winW, 640, 16384);
+            p.winH        = std::clamp(p.winH, 480, 16384);
+            if (p.dpiOverride != 0.0f)
+                p.dpiOverride = std::clamp(p.dpiOverride, 0.5f, 4.0f);
         }
     } catch (const std::exception&) {
         out = AppConfig{}; // corrupt config -> start clean
