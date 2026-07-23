@@ -158,10 +158,8 @@ BODEX_DEMO=1 ./build/BodeX.exe
    closes unexpectedly, the next launch offers to **recover** it. Autosave is a safety
    net only — your `.json` is still written by Save.
 9. **Settings.** The **Settings** menu opens a two-pane panel:
-   - **General** — pick a **theme** (Dark / Light / Classic), a **UI scale** for
-     menus and dialogs, the **`+`/`-` point step** (e.g. 0.5 instead of 1), the
-     **window size** (presets or a custom W×H) / **borderless fullscreen** / a
-     **display-scale (DPI) override**, the **autosave interval**, and a
+   - **General** — pick a **theme** (Dark / Light / Classic), the **`+`/`-` point
+     step** (e.g. 0.5 instead of 1), the **autosave interval**, and a
      **Clear recent projects** button. Changes apply immediately and are remembered
      across launches.
    - **Keybinds** — a reference list of every keyboard shortcut.

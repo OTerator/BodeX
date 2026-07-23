@@ -187,15 +187,26 @@ Parked items to revisit (not scheduled). See `spec.md` for architecture.
 - ~~**Settings menu**~~ — **done:** a top-bar **Settings** menu opens a full-screen,
   two-pane panel (`Screen::Settings`, `ui/SettingsScreen.cpp`, spec.md §8e) with left-nav
   sections. **General** persists `AppConfig::prefs` (`gt::Preferences`): **theme**
-  (Dark/Light/Classic, live via `App::applyDisplaySettings` — rebuilds the style so
-  `ScaleAllSizes` never compounds), **UI scale**, the **`+`/`-` step size**, **autosave
-  interval**, **clear recents**, and **resolution** — window-size presets + custom W×H,
-  borderless **fullscreen**, and a **DPI/scale override** (applied to the Win32 window
-  via a one-shot request latch `main.cpp` consumes after render). **Keybinds** is a
-  read-only shortcut table; **Project** embeds the §8d structure editor. `BODEX_DEMO=4`
-  opens it. *Still open:* actually **rebindable** keys (Keybinds is reference-only for
-  now); per-question rubric notes at config time; a **notes font / default text
-  direction** control (the BiDi work below).
+  (Dark/Light/Classic, live via `App::applyDisplaySettings` — rebuilds from defaults so
+  a theme switch never compounds the DPI scale), the **`+`/`-` step size**, the
+  **autosave interval**, and **clear recents**. **Keybinds** is a read-only shortcut
+  table; **Project** embeds the §8d structure editor. `BODEX_DEMO=4` opens it. *Still
+  open:* actually **rebindable** keys (Keybinds is reference-only for now); per-question
+  rubric notes at config time; a **notes font / default text direction** control (the
+  BiDi work below); and the parked UI-scale / display settings below.
+- **UI scale & display/resolution settings** (parked — reverted once). A first cut of
+  the Settings panel added a **UI scale** slider and a **Display/resolution** block
+  (window-size presets + custom W×H, borderless **fullscreen**, and a **DPI/scale
+  override**), persisted in `prefs` and — for the window bits — pushed to the Win32
+  window via a one-shot request latch `main.cpp` consumed after render. **Reverted**
+  because driving `ScaleAllSizes` + `FontScaleMain` from user-set factors tripped an
+  ImGui style assertion (`WindowBorderHoverPadding > 0.0f`, a hard crash) and rendered
+  text unreadably small at fractional scale. *Redo properly:* use the ImGui 1.92 dynamic
+  font path (per-`PushFont` `FontSizeBase` sizing, like the grid's `gridZoom`, **not** a
+  global `ScaleAllSizes`/`FontScaleMain`) and validate the style after scaling. The
+  **window-geometry request-latch pattern itself worked** (verified a live resize to
+  1600×900) and can be reused for the resolution part — the crash was purely the
+  style-scaling path.
 - ~~**Ctrl+scroll to zoom the grid**~~ — **done:** hold Ctrl and mouse-wheel over the
   grid to scale it (row height, column widths, cell font) via a per-view `App::gridZoom`
   (0.5–2.5×), independent of the monitor-DPI factor. The table wraps in

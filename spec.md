@@ -95,9 +95,8 @@ for GUI testing without clicking through the launcher).
 `prefs.autosaveSec`, default 30 s — §8c/§8e) — set it low (e.g. `2`) to exercise
 autosave / crash-recovery quickly during GUI testing.
 
-The window opens at the saved `prefs.winW`/`winH` (or fullscreen) and the theme/scale
-come from `prefs` (§8e); a fresh machine with no `config.json` uses the defaults
-(1280×820, Dark, monitor DPI).
+The theme comes from `prefs` (§8e); a fresh machine with no `config.json` uses the
+defaults (Dark, monitor DPI). The window opens at the fixed default size (1280×820).
 
 **Desktop shortcut:** `tools/create_shortcut.ps1` creates/refreshes
 `Desktop\BodeX.lnk` (icon from `resources/BodeX.ico`, target `build/BodeX.exe`,
@@ -371,7 +370,8 @@ Per-cell effective points, **highest precedence first**:
   image sub-question tags).
 - Config: `%APPDATA%\BodeX\config.json` holds the recent-projects list, the
   pending-autosave record (`AutosaveRecord`, §8c), **and the Settings preferences**
-  (`Preferences` under `"prefs"`, §8e); `%APPDATA%\BodeX\projects\` is
+  (`Preferences` under `"prefs"` — theme, `+/-` step, autosave interval — §8e);
+  `%APPDATA%\BodeX\projects\` is
   the suggested (not enforced) save dir and `%APPDATA%\BodeX\autosave\` holds the
   crash-recovery files. `AppConfig` resolves these via
   `SHGetFolderPathW(CSIDL_APPDATA)` and creates them on demand (`appDataDir`,
@@ -605,8 +605,9 @@ enters it at a section; the menu offers `Settings…`/`General`/`Keybinds`/`Proj
 into the Project section. **Close** returns to `hasProject ? Grading : Home`.
 
 Sections (`App::SettingsSection`):
-- **General** — the persisted preferences (below). Each control applies **live** and
-  `saveConfig`s on commit; the panel also saves on Close.
+- **General** — the persisted preferences (below): **Theme**, the **`+`/`-` point
+  step**, and **Data** (autosave interval + Clear recent projects). Each control
+  applies **live** and `saveConfig`s on commit; the panel also saves on Close.
 - **Keybinds** — a **read-only** shortcut reference table (a structured mirror of the
   F1 overlay text `gridShortcutsText`; rebinding is not yet implemented).
 - **Project** — the §8d structure editor, embedded (its own Apply/Cancel footer).
@@ -615,29 +616,25 @@ Sections (`App::SettingsSection`):
 `config.json` under `"prefs"`; `configFromJsonString` is tolerant of a missing/partial
 block (each key falls back to its default) and **clamps** every value to a sane range,
 so a hand-edited/old config can't wedge the UI. Fields: `theme` (0 Dark / 1 Light /
-2 Classic), `stepSize` (the `+`/`-` point step, §6), `uiScale`, `autosaveSec`,
-`winW`/`winH`, `fullscreen`, `dpiOverride` (0 = auto). Round-trip + clamp tests in
-`testConfigRoundTrip`.
+2 Classic), `stepSize` (the `+`/`-` point step, §6), and `autosaveSec`. Unknown keys
+are ignored (an older config that carried extra keys still loads cleanly). Round-trip +
+clamp tests in `testConfigRoundTrip`.
 
-**Applying prefs.** `App::applyDisplaySettings()` **rebuilds** the ImGui style from
-scratch each call — `StyleColors{Dark,Light,Classic}` per `theme`, then
-`ScaleAllSizes(eff)` + `FontScaleMain = eff` where `eff = (dpiOverride>0 ? dpiOverride
-: baseDpi_) * uiScale` — so repeated theme/scale changes never compound `ScaleAllSizes`.
-`main.cpp` hands the monitor DPI in via `setBaseDpi` and calls it once at startup, then
-the panel calls it on each display-pref change. *Interaction:* grid **cell** text is
-driven by `gridZoom` (`FontSizeBase * gridZoom`, which deliberately bypasses
-`FontScaleMain`, §9), so `uiScale` scales chrome/menus/dialogs but not grid cells.
-`applyPrefsRuntime()` pushes `autosaveSec` into `autosaveInterval_` (the
-`BODEX_AUTOSAVE_SEC` env override still wins).
+**Applying prefs.** `App::applyDisplaySettings()` applies the **theme** and the
+monitor-DPI scale: `StyleColors{Dark,Light,Classic}` per `theme`, then a single
+`ScaleAllSizes(baseDpi_)` (if >1) + `FontScaleMain = baseDpi_`. It rebuilds from
+defaults each call (StyleColors resets colours + sizes) so a theme switch never
+compounds the DPI scale. `main.cpp` hands the monitor DPI in via `setBaseDpi` and calls
+it once at startup; the panel calls it again on a theme change. `applyPrefsRuntime()`
+pushes `autosaveSec` into `autosaveInterval_` (the `BODEX_AUTOSAVE_SEC` env override
+still wins).
 
-**Window geometry (the platform bridge).** The GUI-free `App` has no `HWND`, so
-resolution/fullscreen changes go through a one-shot latch: the Settings screen calls
-`requestWindowChange()`, and `main.cpp` — after `app.render()`, mirroring the
-`g_closeRequested`/`g_appDeactivated` pattern — reads `consumeWindowRequest(w,h,fs)` and
-applies it (`SetClientSize` / borderless-fullscreen `SetFullscreen`). `winW`/`winH` are
-a **client** size (matches `WM_SIZE`), applied at launch from a boot `loadConfig` before
-`ShowWindow`, and the live size is fed back via `setLiveWindowSize` each frame and saved
-on clean exit.
+*Parked (see NOTES.md).* A first cut also offered a **UI scale** and a whole
+**Display/resolution** block (window-size presets/custom, borderless fullscreen, DPI
+override, driven into the Win32 window through a request latch `main.cpp` consumed).
+It was reverted — user-driven `ScaleAllSizes`/`FontScaleMain` scaling tripped an ImGui
+style assertion (`WindowBorderHoverPadding > 0`) and rendered unreadably at fractional
+scale. The window stays at the fixed default size; only theme + monitor-DPI scaling apply.
 
 ---
 

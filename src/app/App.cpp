@@ -454,24 +454,19 @@ void App::openSettings(SettingsSection s)
     screen = Screen::Settings;
 }
 
-// Rebuild the ImGui style from scratch (theme colours + sizes) then scale it once,
-// so repeated calls never compound ScaleAllSizes. Called at launch and whenever a
-// display pref (theme / UI scale / DPI override) is committed in the Settings panel.
+// Apply the chosen theme, then scale the style once to the monitor DPI. Rebuilds
+// from defaults each call (StyleColors* resets colours + sizes) so a theme switch
+// never compounds the DPI scale. Called at launch and on a theme change.
 void App::applyDisplaySettings()
 {
-    const gt::Preferences& p = config.prefs;
-
     ImGui::StyleColorsDark(); // reset to defaults first (also restores default sizes)
-    if (p.theme == 1)      ImGui::StyleColorsLight();
-    else if (p.theme == 2) ImGui::StyleColorsClassic();
-
-    const float dpi = (p.dpiOverride > 0.0f) ? p.dpiOverride : baseDpi_;
-    const float eff = dpi * p.uiScale;
+    if (config.prefs.theme == 1)      ImGui::StyleColorsLight();
+    else if (config.prefs.theme == 2) ImGui::StyleColorsClassic();
 
     ImGuiStyle& style = ImGui::GetStyle();
-    if (eff != 1.0f)
-        style.ScaleAllSizes(eff);
-    style.FontScaleMain = eff; // global font scale (grid cells use FontSizeBase*gridZoom)
+    if (baseDpi_ > 1.0f)
+        style.ScaleAllSizes(baseDpi_);
+    style.FontScaleMain = baseDpi_; // global font scale (grid cells use FontSizeBase*gridZoom)
 }
 
 // Push non-display prefs that live outside the ImGui style. The autosave interval
@@ -483,31 +478,6 @@ void App::applyPrefsRuntime()
         return; // env override is authoritative
     if (config.prefs.autosaveSec > 0.0)
         autosaveInterval_ = config.prefs.autosaveSec;
-}
-
-void App::requestWindowChange() { windowRequest_ = true; }
-
-bool App::consumeWindowRequest(int& w, int& h, bool& fullscreen)
-{
-    if (!windowRequest_)
-        return false;
-    windowRequest_ = false;
-    w          = config.prefs.winW;
-    h          = config.prefs.winH;
-    fullscreen = config.prefs.fullscreen;
-    return true;
-}
-
-void App::setLiveWindowSize(int w, int h)
-{
-    // Persist the actual window size (unless fullscreen, whose rect is the monitor)
-    // so the next launch restores it. Cheap; only writes when it actually changed.
-    if (config.prefs.fullscreen)
-        return;
-    if (w >= 640 && h >= 480 && (w != config.prefs.winW || h != config.prefs.winH)) {
-        config.prefs.winW = w;
-        config.prefs.winH = h;
-    }
 }
 
 // ----------------------------------------------- project settings (§8d) --

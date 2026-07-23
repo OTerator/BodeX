@@ -56,14 +56,6 @@ void generalSection(App& app)
         persist(app);
     }
 
-    ImGui::SetNextItemWidth(220);
-    if (ImGui::SliderFloat("UI scale", &p.uiScale, 0.5f, 3.0f, "%.2fx"))
-        app.applyDisplaySettings();                 // live preview while dragging
-    if (ImGui::IsItemDeactivatedAfterEdit())
-        persist(app);
-    ImGui::SameLine();
-    ImGui::TextColored(kMuted, "(menus/dialogs; grid cells use Ctrl+wheel zoom)");
-
     ImGui::Dummy(ImVec2(0, 6));
     ImGui::SeparatorText("Grading");
 
@@ -80,63 +72,6 @@ void generalSection(App& app)
         char lbl[16];
         std::snprintf(lbl, sizeof lbl, "%.2g", preset);
         if (ImGui::SmallButton(lbl)) { p.stepSize = preset; persist(app); }
-    }
-
-    ImGui::Dummy(ImVec2(0, 6));
-    ImGui::SeparatorText("Display / resolution");
-
-    // Fullscreen toggle: applied to the Win32 window by the host after render.
-    if (ImGui::Checkbox("Borderless fullscreen", &p.fullscreen)) {
-        app.requestWindowChange();
-        persist(app);
-    }
-
-    ImGui::BeginDisabled(p.fullscreen);
-    ImGui::TextUnformatted("Window size:");
-    ImGui::SameLine();
-    struct Preset { const char* label; int w, h; };
-    for (const Preset& pr : { Preset{"1280x720", 1280, 720},
-                              Preset{"1600x900", 1600, 900},
-                              Preset{"1920x1080", 1920, 1080} }) {
-        if (ImGui::SmallButton(pr.label)) {
-            p.winW = pr.w; p.winH = pr.h;
-            app.requestWindowChange();
-            persist(app);
-        }
-        ImGui::SameLine();
-    }
-    ImGui::NewLine();
-    int wh[2] = { p.winW, p.winH };
-    ImGui::SetNextItemWidth(200);
-    if (ImGui::InputInt2("Custom W x H", wh)) {
-        p.winW = std::clamp(wh[0], 640, 16384);
-        p.winH = std::clamp(wh[1], 480, 16384);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Apply size")) {
-        app.requestWindowChange();
-        persist(app);
-    }
-    ImGui::EndDisabled();
-
-    // DPI / scale override: 0 = auto (monitor DPI). A checkbox seeds a sensible
-    // starting factor so the slider isn't stuck at 0 when first enabled.
-    bool dpiOn = p.dpiOverride > 0.0f;
-    if (ImGui::Checkbox("Override display scale (DPI)", &dpiOn)) {
-        p.dpiOverride = dpiOn ? 1.5f : 0.0f;
-        app.applyDisplaySettings();
-        persist(app);
-    }
-    if (dpiOn) {
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(200);
-        if (ImGui::SliderFloat("##dpi", &p.dpiOverride, 0.75f, 3.0f, "%.2fx"))
-            app.applyDisplaySettings();
-        if (ImGui::IsItemDeactivatedAfterEdit())
-            persist(app);
-    } else {
-        ImGui::SameLine();
-        ImGui::TextColored(kMuted, "auto (monitor DPI)");
     }
 
     ImGui::Dummy(ImVec2(0, 6));
